@@ -231,7 +231,7 @@ async function startServer() {
 
     /* ---------------------------------------------
        VERIFY EMAIL / SMTP CONNECTION
-       
+
        This checks whether the Gmail SMTP
        credentials from .env are valid.
     --------------------------------------------- */
@@ -240,7 +240,7 @@ async function startServer() {
 
     /* ---------------------------------------------
        START BOOKING REMINDER SCHEDULER
-       
+
        This checks every minute for bookings
        starting approximately one hour later.
     --------------------------------------------- */
@@ -249,11 +249,15 @@ async function startServer() {
 
     /* ---------------------------------------------
        START EXPRESS SERVER
+
+       0.0.0.0 allows Render and other external
+       clients to reach the application.
     --------------------------------------------- */
 
     const server =
       app.listen(
         PORT,
+        "0.0.0.0",
         () => {
           console.log(
             `Server running on http://localhost:${PORT}`
