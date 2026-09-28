@@ -1,0 +1,159 @@
+@import "tailwindcss";
+
+:root {
+  /* =====================================================
+     DANGOTE BRAND COLORS
+  ===================================================== */
+
+  /* Main page background */
+  --background: #eef4ff;
+
+  /* Main text */
+  --foreground: #10275f;
+
+  /* Primary Dangote navy */
+  --navy: #10275f;
+
+  /* Deep navy */
+  --deep-navy: #071b45;
+
+  /* Primary blue */
+  --blue: #1d4ed8;
+
+  /* Blue hover */
+  --blue-hover: #1742b5;
+
+  /* Light blue */
+  --light-blue: #eef4ff;
+
+  /* Very light blue */
+  --soft-blue: #f6f9ff;
+
+  /* Dangote red */
+  --red: #e83b32;
+
+  /* Red hover */
+  --red-hover: #cf3028;
+
+  /* White */
+  --white: #ffffff;
+
+  /* Muted text */
+  --muted: #64748b;
+
+  /* Light border */
+  --border: #d5e2f7;
+
+  /* Slightly darker border */
+  --border-dark: #c4d3eb;
+
+  /* Main card background */
+  --cream: #ffffff;
+
+  /* =====================================================
+     BACKWARD COMPATIBILITY
+
+     These names existed in the old theme.
+     Keeping them prevents existing components
+     from breaking if they still use them.
+  ===================================================== */
+
+  --terracotta: #e83b32;
+  --forest: #10275f;
+  --gold: #1d4ed8;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+
+  background: var(--background);
+
+  color: var(--foreground);
+
+  font-family:
+    Arial,
+    Helvetica,
+    sans-serif;
+
+  min-height: 100vh;
+}
+
+/* =====================================================
+   BUTTONS
+===================================================== */
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+/* =====================================================
+   LINKS
+===================================================== */
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* =====================================================
+   FORM ELEMENTS
+===================================================== */
+
+input,
+textarea,
+select {
+  outline: none;
+}
+
+/* =====================================================
+   FORM FOCUS
+===================================================== */
+
+input:focus,
+textarea:focus,
+select:focus {
+  border-color: var(--blue);
+}
+
+/* =====================================================
+   TEXT SELECTION
+===================================================== */
+
+::selection {
+  background: #dbe8ff;
+  color: var(--deep-navy);
+}
+
+/* =====================================================
+   SCROLLBAR
+===================================================== */
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #eef4ff;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #b7c9e6;
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #8fa9d1;
+}
