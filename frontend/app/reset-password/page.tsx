@@ -1,39 +1,35 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useEffect, useState } from "react";
+import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
   ArrowRight,
   CheckCircle2,
-  Eye,
-  EyeOff,
   LockKeyhole,
+  Loader2,
+  AlertCircle,
 } from "lucide-react";
 
 const API_URL =
   process.env.NEXT_PUBLIC_API_URL ||
   "http://localhost:5000";
 
-export default function ResetPasswordPage() {
+/* =====================================================
+   RESET PASSWORD CONTENT
+===================================================== */
+
+function ResetPasswordContent() {
   const searchParams = useSearchParams();
 
   const token = searchParams.get("token");
 
-  const [newPassword, setNewPassword] =
+  const [password, setPassword] =
     useState("");
 
   const [confirmPassword, setConfirmPassword] =
     useState("");
-
-  const [showNewPassword, setShowNewPassword] =
-    useState(false);
-
-  const [
-    showConfirmPassword,
-    setShowConfirmPassword,
-  ] = useState(false);
 
   const [isLoading, setIsLoading] =
     useState(false);
@@ -44,119 +40,72 @@ export default function ResetPasswordPage() {
   const [success, setSuccess] =
     useState(false);
 
-  const [invalidToken, setInvalidToken] =
-    useState(false);
-
   /* =====================================================
-     CHECK RESET TOKEN
-  ===================================================== */
-
-  useEffect(() => {
-    if (!token) {
-      setInvalidToken(true);
-    }
-  }, [token]);
-
-  /* =====================================================
-     RESET PASSWORD
+     SUBMIT
   ===================================================== */
 
   async function handleSubmit(
-    event: FormEvent<HTMLFormElement>
+    event: React.FormEvent<HTMLFormElement>
   ) {
     event.preventDefault();
 
     setError("");
 
-    /* ---------- Check token ---------- */
-
     if (!token) {
-      setInvalidToken(true);
-
       setError(
         "This password reset link is invalid or incomplete."
       );
-
       return;
     }
 
-    /* ---------- Validate password ---------- */
-
-    if (newPassword.length < 8) {
+    if (password.length < 8) {
       setError(
         "Password must be at least 8 characters long."
       );
-
       return;
     }
 
-    if (newPassword.length > 128) {
+    if (password.length > 128) {
       setError(
-        "Password cannot exceed 128 characters."
+        "Password cannot be longer than 128 characters."
       );
-
       return;
     }
 
-    /* ---------- Confirm password ---------- */
-
-    if (
-      newPassword !==
-      confirmPassword
-    ) {
+    if (password !== confirmPassword) {
       setError(
         "Passwords do not match."
       );
-
       return;
     }
 
-    setIsLoading(true);
-
     try {
-      /* =================================================
-         RESET PASSWORD REQUEST
-      ================================================= */
+      setIsLoading(true);
 
       const response = await fetch(
         `${API_URL}/api/auth/reset-password`,
         {
           method: "POST",
-
           headers: {
-            "Content-Type":
-              "application/json",
+            "Content-Type": "application/json",
           },
-
           credentials: "include",
-
           body: JSON.stringify({
             token,
-            newPassword,
+            newPassword: password,
             confirmPassword,
           }),
         }
       );
 
-      const data =
-        await response.json();
-
-      /* =================================================
-         RESET FAILED
-      ================================================= */
+      const data = await response.json();
 
       if (!response.ok) {
-        setError(
+        throw new Error(
           data.message ||
-            "Unable to reset your password. Please try again."
+            "Unable to reset your password."
         );
-
-        return;
       }
-
-      /* =================================================
-         RESET SUCCESSFUL
-      ================================================= */
 
       setSuccess(true);
     } catch (error) {
@@ -166,444 +115,583 @@ export default function ResetPasswordPage() {
       );
 
       setError(
-        "Unable to connect to the server. Please try again."
+        error instanceof Error
+          ? error.message
+          : "Unable to reset your password."
       );
     } finally {
       setIsLoading(false);
     }
   }
 
-  return (
-    <main className="min-h-screen bg-[#071B45]">
-      <div className="grid min-h-screen lg:grid-cols-[45%_55%]">
+  /* =====================================================
+     INVALID TOKEN
+  ===================================================== */
 
-        {/* =====================================================
-            LEFT BRAND PANEL
-        ===================================================== */}
+  if (!token) {
+    return (
+      <div className="min-h-screen bg-[#F4F7FC]">
 
-        <section className="relative hidden overflow-hidden bg-[#10275F] lg:flex">
+        <div className="flex min-h-screen">
 
-          <div className="absolute -left-32 -top-32 h-[500px] w-[500px] rounded-full bg-[#0A1F4D]" />
+          {/* LEFT */}
 
-          <div className="absolute -bottom-40 -right-40 h-[600px] w-[600px] rounded-full bg-[#0B2151]" />
+          <div className="relative hidden w-1/2 overflow-hidden bg-[#102D72] lg:flex">
 
-          <div className="absolute left-0 top-0 h-full w-1 bg-[#E83B32]" />
+            <div className="absolute -left-32 -top-32 h-[420px] w-[420px] rounded-full bg-[#193B88]" />
 
-          <div className="relative z-10 flex w-full flex-col justify-between p-12 xl:p-16">
+            <div className="absolute -bottom-40 -right-40 h-[500px] w-[500px] rounded-full bg-[#0C245C]" />
 
-            {/* Logo */}
+            <div className="relative z-10 flex w-full flex-col justify-between p-16">
 
-            <div>
-              <img
-                src="/dangote-logo.png"
-                alt="Dangote"
-                className="h-auto w-52 object-contain"
-              />
-            </div>
+              <div>
+                <div className="inline-flex items-center justify-center bg-[#18367F] px-10 py-7">
+                  <span className="text-2xl font-black tracking-tight text-white">
+                    DANGOTE
+                  </span>
+                </div>
 
-            {/* Main message */}
+                <div className="mt-28">
 
-            <div className="max-w-md">
+                  <div className="mb-7 h-1 w-14 bg-[#E83B32]" />
 
-              <div className="mb-6 h-1 w-14 bg-[#E83B32]" />
+                  <h1 className="max-w-lg text-6xl font-bold leading-[1.05] text-white">
+                    Secure.
+                    <br />
+                    Simple.
+                    <br />
+                    Reliable.
+                  </h1>
 
-              <h2 className="text-5xl font-bold leading-[1.05] tracking-tight text-white xl:text-6xl">
-                Secure.
-                <br />
-                Simple.
-                <br />
-                Reliable.
-              </h2>
+                  <p className="mt-8 max-w-md text-lg leading-8 text-blue-100">
+                    Reset your Conference Room
+                    Booking password securely
+                    and get back to managing
+                    your meetings.
+                  </p>
 
-              <p className="mt-7 max-w-sm text-lg leading-8 text-blue-100/80">
-                Create a new password and securely
-                regain access to your Conference Room
-                Booking account.
-              </p>
+                </div>
+              </div>
 
-            </div>
-
-            {/* Footer */}
-
-            <div className="flex items-center gap-3 text-sm text-blue-100/70">
-
-              <span className="h-6 w-1 bg-[#E83B32]" />
-
-              <span>
+              <div className="flex items-center gap-3 text-sm text-blue-200">
+                <span className="h-6 w-1 bg-[#E83B32]" />
                 Building a stronger tomorrow together.
-              </span>
+              </div>
 
             </div>
 
           </div>
 
-        </section>
+          {/* RIGHT */}
 
-        {/* =====================================================
-            RIGHT RESET PASSWORD PANEL
-        ===================================================== */}
+          <div className="flex min-h-screen w-full items-center justify-center p-6 lg:w-1/2 lg:p-12">
 
-        <section className="flex min-h-screen items-center justify-center bg-[#F4F7FC] px-5 py-10 sm:px-8">
+            <div className="w-full max-w-lg">
 
-          <div className="w-full max-w-[480px]">
+              <div className="rounded-3xl bg-white p-8 shadow-[0_20px_60px_rgba(16,45,114,0.12)] md:p-10">
 
-            {/* Mobile logo */}
+                <Link
+                  href="/login"
+                  className="inline-flex items-center gap-2 text-sm font-bold text-[#102D72] transition hover:text-[#E83B32]"
+                >
+                  <ArrowLeft size={17} />
+                  Back to Login
+                </Link>
 
-            <div className="mb-8 flex justify-center lg:hidden">
+                <div className="mt-8">
 
-              <img
-                src="/dangote-logo.png"
-                alt="Dangote"
-                className="w-48"
-              />
+                  <div className="mb-5 h-1 w-12 bg-[#E83B32]" />
+
+                  <h2 className="text-3xl font-bold tracking-tight text-[#102D72]">
+                    Invalid Reset Link
+                  </h2>
+
+                  <p className="mt-3 leading-7 text-[#64748B]">
+                    This password reset link is
+                    missing or invalid. Please
+                    request a new password reset
+                    link.
+                  </p>
+
+                </div>
+
+                <Link
+                  href="/forgot-password"
+                  className="
+                    mt-8
+                    inline-flex
+                    h-12
+                    w-full
+                    items-center
+                    justify-center
+                    gap-2
+                    rounded-xl
+                    bg-[#102D72]
+                    px-5
+                    text-sm
+                    font-bold
+                    text-white
+                    shadow-lg
+                    transition
+                    hover:bg-[#0C245C]
+                  "
+                >
+                  Request New Reset Link
+                  <ArrowRight size={17} />
+                </Link>
+
+              </div>
+
+              <p className="mt-7 text-center text-xs text-[#94A3B8]">
+                © 2026 Dangote Group. All rights reserved.
+              </p>
 
             </div>
 
-            {/* Card */}
-
-            <div className="rounded-[28px] bg-white p-7 shadow-[0_25px_70px_rgba(7,27,69,0.12)] sm:p-10">
-
-              {success ? (
-                <>
-                  {/* Success icon */}
-
-                  <div className="flex justify-center">
-
-                    <div className="flex h-16 w-16 items-center justify-center rounded-full bg-green-50">
-                      <CheckCircle2
-                        size={34}
-                        className="text-green-600"
-                      />
-                    </div>
-
-                  </div>
-
-                  {/* Success message */}
-
-                  <div className="mt-6 text-center">
-
-                    <h1 className="text-3xl font-bold tracking-tight text-[#10275F]">
-                      Password Reset
-                    </h1>
-
-                    <p className="mt-4 text-sm leading-6 text-slate-500">
-                      Your password has been reset
-                      successfully.
-                    </p>
-
-                  </div>
-
-                  <div className="mt-6 rounded-xl bg-[#F4F7FC] px-5 py-4">
-                    <p className="text-sm leading-6 text-slate-600">
-                      You can now sign in using your
-                      new password.
-                    </p>
-                  </div>
-
-                  {/* Login button */}
-
-                  <Link
-                    href="/login"
-                    className="mt-7 flex h-14 w-full items-center justify-center gap-2 rounded-xl bg-[#10275F] text-sm font-bold text-white shadow-lg shadow-[#10275F]/20 transition hover:bg-[#0B2151] hover:shadow-xl"
-                  >
-                    Go to Login
-                    <ArrowRight size={18} />
-                  </Link>
-                </>
-              ) : invalidToken ? (
-                <>
-                  {/* Invalid token */}
-
-                  <div className="flex justify-center">
+          </div>
 
-                    <div className="flex h-16 w-16 items-center justify-center rounded-full bg-red-50">
-                      <LockKeyhole
-                        size={30}
-                        className="text-[#E83B32]"
-                      />
-                    </div>
-
-                  </div>
-
-                  <div className="mt-6 text-center">
-
-                    <h1 className="text-3xl font-bold tracking-tight text-[#10275F]">
-                      Invalid Reset Link
-                    </h1>
-
-                    <p className="mt-4 text-sm leading-6 text-slate-500">
-                      This password reset link is
-                      invalid or has expired.
-                    </p>
-
-                  </div>
-
-                  <div className="mt-6 rounded-xl bg-[#F4F7FC] px-5 py-4">
-                    <p className="text-sm leading-6 text-slate-600">
-                      Please request a new password
-                      reset link and try again.
-                    </p>
-                  </div>
-
-                  {/* Request new link */}
-
-                  <Link
-                    href="/forgot-password"
-                    className="mt-7 flex h-14 w-full items-center justify-center gap-2 rounded-xl bg-[#10275F] text-sm font-bold text-white shadow-lg shadow-[#10275F]/20 transition hover:bg-[#0B2151] hover:shadow-xl"
-                  >
-                    Request New Reset Link
-                    <ArrowRight size={18} />
-                  </Link>
-
-                  {/* Login */}
-
-                  <Link
-                    href="/login"
-                    className="mt-5 flex items-center justify-center gap-2 text-sm font-semibold text-[#10275F] hover:text-[#E83B32]"
-                  >
-                    <ArrowLeft size={16} />
-                    Back to Login
-                  </Link>
-                </>
-              ) : (
-                <>
-                  {/* Back to login */}
-
-                  <Link
-                    href="/login"
-                    className="mb-7 inline-flex items-center gap-2 text-sm font-semibold text-[#10275F] transition hover:text-[#E83B32]"
-                  >
-                    <ArrowLeft size={17} />
-                    Back to Login
-                  </Link>
-
-                  {/* Heading */}
-
-                  <div className="mb-8">
-
-                    <div className="mb-4 h-1 w-12 bg-[#E83B32]" />
-
-                    <h1 className="text-3xl font-bold tracking-tight text-[#10275F]">
-                      Reset Password
-                    </h1>
-
-                    <p className="mt-3 text-sm leading-6 text-slate-500">
-                      Create a new password for your
-                      Conference Room Booking account.
-                    </p>
-
-                  </div>
-
-                  {/* Form */}
-
-                  <form
-                    onSubmit={handleSubmit}
-                    className="space-y-5"
-                  >
-
-                    {/* New Password */}
-
-                    <div>
-
-                      <label
-                        htmlFor="newPassword"
-                        className="mb-2 block text-sm font-semibold text-[#10275F]"
-                      >
-                        New Password
-                      </label>
-
-                      <div className="relative">
-
-                        <LockKeyhole
-                          size={18}
-                          className="absolute left-4 top-1/2 -translate-y-1/2 text-[#10275F]/60"
-                        />
-
-                        <input
-                          id="newPassword"
-                          type={
-                            showNewPassword
-                              ? "text"
-                              : "password"
-                          }
-                          value={newPassword}
-                          onChange={(event) => {
-                            setNewPassword(
-                              event.target.value
-                            );
-
-                            if (error) {
-                              setError("");
-                            }
-                          }}
-                          placeholder="Enter new password"
-                          required
-                          minLength={8}
-                          maxLength={128}
-                          autoComplete="new-password"
-                          disabled={isLoading}
-                          className="h-14 w-full rounded-xl border border-[#D5DEEF] bg-[#F8FAFD] pl-12 pr-12 text-sm text-[#10275F] outline-none transition placeholder:text-slate-400 focus:border-[#10275F] focus:bg-white focus:ring-4 focus:ring-[#10275F]/5 disabled:cursor-not-allowed disabled:opacity-60"
-                        />
-
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setShowNewPassword(
-                              !showNewPassword
-                            )
-                          }
-                          className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-[#10275F]"
-                          aria-label={
-                            showNewPassword
-                              ? "Hide new password"
-                              : "Show new password"
-                          }
-                        >
-                          {showNewPassword ? (
-                            <EyeOff size={18} />
-                          ) : (
-                            <Eye size={18} />
-                          )}
-                        </button>
-
-                      </div>
-
-                      <p className="mt-2 text-xs text-slate-400">
-                        Password must be between 8 and
-                        128 characters.
-                      </p>
-
-                    </div>
-
-                    {/* Confirm Password */}
-
-                    <div>
-
-                      <label
-                        htmlFor="confirmPassword"
-                        className="mb-2 block text-sm font-semibold text-[#10275F]"
-                      >
-                        Confirm New Password
-                      </label>
-
-                      <div className="relative">
-
-                        <LockKeyhole
-                          size={18}
-                          className="absolute left-4 top-1/2 -translate-y-1/2 text-[#10275F]/60"
-                        />
-
-                        <input
-                          id="confirmPassword"
-                          type={
-                            showConfirmPassword
-                              ? "text"
-                              : "password"
-                          }
-                          value={confirmPassword}
-                          onChange={(event) => {
-                            setConfirmPassword(
-                              event.target.value
-                            );
-
-                            if (error) {
-                              setError("");
-                            }
-                          }}
-                          placeholder="Confirm new password"
-                          required
-                          minLength={8}
-                          maxLength={128}
-                          autoComplete="new-password"
-                          disabled={isLoading}
-                          className="h-14 w-full rounded-xl border border-[#D5DEEF] bg-[#F8FAFD] pl-12 pr-12 text-sm text-[#10275F] outline-none transition placeholder:text-slate-400 focus:border-[#10275F] focus:bg-white focus:ring-4 focus:ring-[#10275F]/5 disabled:cursor-not-allowed disabled:opacity-60"
-                        />
-
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setShowConfirmPassword(
-                              !showConfirmPassword
-                            )
-                          }
-                          className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-[#10275F]"
-                          aria-label={
-                            showConfirmPassword
-                              ? "Hide confirmed password"
-                              : "Show confirmed password"
-                          }
-                        >
-                          {showConfirmPassword ? (
-                            <EyeOff size={18} />
-                          ) : (
-                            <Eye size={18} />
-                          )}
-                        </button>
-
-                      </div>
-
-                    </div>
-
-                    {/* Error */}
-
-                    {error && (
-                      <div className="rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm font-medium text-red-600">
-                        {error}
-                      </div>
-                    )}
-
-                    {/* Submit */}
-
-                    <button
-                      type="submit"
-                      disabled={isLoading}
-                      className="group flex h-14 w-full items-center justify-center gap-3 rounded-xl bg-[#10275F] text-sm font-bold text-white shadow-lg shadow-[#10275F]/20 transition hover:bg-[#0B2151] hover:shadow-xl disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-
-                      <span>
-                        {isLoading
-                          ? "Resetting Password..."
-                          : "Reset Password"}
-                      </span>
-
-                      {!isLoading && (
-                        <ArrowRight
-                          size={19}
-                          className="transition-transform group-hover:translate-x-1"
-                        />
-                      )}
-
-                    </button>
-
-                  </form>
-
-                  {/* Security note */}
-
-                  <div className="mt-6 rounded-xl bg-[#F4F7FC] px-4 py-3">
-
-                    <p className="text-xs leading-5 text-slate-500">
-                      For your security, your reset link
-                      can only be used once and expires
-                      after 15 minutes.
-                    </p>
-
-                  </div>
-                </>
+        </div>
+
+      </div>
+    );
+  }
+
+  /* =====================================================
+     SUCCESS
+  ===================================================== */
+
+  if (success) {
+    return (
+      <div className="min-h-screen bg-[#F4F7FC]">
+
+        <div className="flex min-h-screen">
+
+          {/* LEFT */}
+
+          <div className="relative hidden w-1/2 overflow-hidden bg-[#102D72] lg:flex">
+
+            <div className="absolute -left-32 -top-32 h-[420px] w-[420px] rounded-full bg-[#193B88]" />
+
+            <div className="absolute -bottom-40 -right-40 h-[500px] w-[500px] rounded-full bg-[#0C245C]" />
+
+            <div className="relative z-10 flex w-full flex-col justify-between p-16">
+
+              <div>
+                <div className="inline-flex items-center justify-center bg-[#18367F] px-10 py-7">
+                  <span className="text-2xl font-black tracking-tight text-white">
+                    DANGOTE
+                  </span>
+                </div>
+
+                <div className="mt-28">
+
+                  <div className="mb-7 h-1 w-14 bg-[#E83B32]" />
+
+                  <h1 className="max-w-lg text-6xl font-bold leading-[1.05] text-white">
+                    Secure.
+                    <br />
+                    Simple.
+                    <br />
+                    Reliable.
+                  </h1>
+
+                  <p className="mt-8 max-w-md text-lg leading-8 text-blue-100">
+                    Your account security is
+                    important to us.
+                  </p>
+
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3 text-sm text-blue-200">
+                <span className="h-6 w-1 bg-[#E83B32]" />
+                Building a stronger tomorrow together.
+              </div>
+
+            </div>
+
+          </div>
+
+          {/* RIGHT */}
+
+          <div className="flex min-h-screen w-full items-center justify-center p-6 lg:w-1/2 lg:p-12">
+
+            <div className="w-full max-w-lg">
+
+              <div className="rounded-3xl bg-white p-8 text-center shadow-[0_20px_60px_rgba(16,45,114,0.12)] md:p-10">
+
+                <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-green-50 text-green-600">
+                  <CheckCircle2 size={34} />
+                </div>
+
+                <h2 className="mt-6 text-3xl font-bold tracking-tight text-[#102D72]">
+                  Password Reset Successfully
+                </h2>
+
+                <p className="mt-3 leading-7 text-[#64748B]">
+                  Your password has been updated.
+                  You can now sign in using your
+                  new password.
+                </p>
+
+                <Link
+                  href="/login"
+                  className="
+                    mt-8
+                    inline-flex
+                    h-12
+                    w-full
+                    items-center
+                    justify-center
+                    gap-2
+                    rounded-xl
+                    bg-[#102D72]
+                    px-5
+                    text-sm
+                    font-bold
+                    text-white
+                    shadow-lg
+                    transition
+                    hover:bg-[#0C245C]
+                  "
+                >
+                  Back to Login
+                  <ArrowRight size={17} />
+                </Link>
+
+              </div>
+
+              <p className="mt-7 text-center text-xs text-[#94A3B8]">
+                © 2026 Dangote Group. All rights reserved.
+              </p>
+
+            </div>
+
+          </div>
+
+        </div>
+
+      </div>
+    );
+  }
+
+  /* =====================================================
+     RESET FORM
+  ===================================================== */
+
+  return (
+    <div className="min-h-screen bg-[#F4F7FC]">
+
+      <div className="flex min-h-screen">
+
+        {/* LEFT */}
+
+        <div className="relative hidden w-1/2 overflow-hidden bg-[#102D72] lg:flex">
+
+          <div className="absolute -left-32 -top-32 h-[420px] w-[420px] rounded-full bg-[#193B88]" />
+
+          <div className="absolute -bottom-40 -right-40 h-[500px] w-[500px] rounded-full bg-[#0C245C]" />
+
+          <div className="relative z-10 flex w-full flex-col justify-between p-16">
+
+            <div>
+
+              <div className="inline-flex items-center justify-center bg-[#18367F] px-10 py-7">
+                <span className="text-2xl font-black tracking-tight text-white">
+                  DANGOTE
+                </span>
+              </div>
+
+              <div className="mt-28">
+
+                <div className="mb-7 h-1 w-14 bg-[#E83B32]" />
+
+                <h1 className="max-w-lg text-6xl font-bold leading-[1.05] text-white">
+                  Secure.
+                  <br />
+                  Simple.
+                  <br />
+                  Reliable.
+                </h1>
+
+                <p className="mt-8 max-w-md text-lg leading-8 text-blue-100">
+                  Create a new secure password
+                  and get back to managing your
+                  meetings.
+                </p>
+
+              </div>
+
+            </div>
+
+            <div className="flex items-center gap-3 text-sm text-blue-200">
+              <span className="h-6 w-1 bg-[#E83B32]" />
+              Building a stronger tomorrow together.
+            </div>
+
+          </div>
+
+        </div>
+
+        {/* RIGHT */}
+
+        <div className="flex min-h-screen w-full items-center justify-center p-6 lg:w-1/2 lg:p-12">
+
+          <div className="w-full max-w-lg">
+
+            <div className="rounded-3xl bg-white p-8 shadow-[0_20px_60px_rgba(16,45,114,0.12)] md:p-10">
+
+              <Link
+                href="/login"
+                className="inline-flex items-center gap-2 text-sm font-bold text-[#102D72] transition hover:text-[#E83B32]"
+              >
+                <ArrowLeft size={17} />
+                Back to Login
+              </Link>
+
+              <div className="mt-8">
+
+                <div className="mb-5 h-1 w-12 bg-[#E83B32]" />
+
+                <h2 className="text-3xl font-bold tracking-tight text-[#102D72]">
+                  Reset Password
+                </h2>
+
+                <p className="mt-3 leading-7 text-[#64748B]">
+                  Enter a new password for your
+                  Conference Room Booking account.
+                </p>
+
+              </div>
+
+              {/* ERROR */}
+
+              {error && (
+
+                <div className="mt-6 flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-medium text-red-700">
+
+                  <AlertCircle
+                    size={19}
+                    className="mt-0.5 shrink-0 text-[#E83B32]"
+                  />
+
+                  <p>{error}</p>
+
+                </div>
+
               )}
 
+              <form
+                onSubmit={handleSubmit}
+                className="mt-7 space-y-5"
+              >
+
+                {/* PASSWORD */}
+
+                <div>
+
+                  <label
+                    htmlFor="new-password"
+                    className="mb-2 block text-sm font-bold text-[#10275F]"
+                  >
+                    New Password
+                  </label>
+
+                  <div className="relative">
+
+                    <LockKeyhole
+                      size={18}
+                      className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[#1D55B8]"
+                    />
+
+                    <input
+                      id="new-password"
+                      type="password"
+                      value={password}
+                      onChange={(event) =>
+                        setPassword(
+                          event.target.value
+                        )
+                      }
+                      disabled={isLoading}
+                      minLength={8}
+                      maxLength={128}
+                      autoComplete="new-password"
+                      placeholder="Enter new password"
+                      className="
+                        h-12
+                        w-full
+                        rounded-xl
+                        border
+                        border-[#D5E2F7]
+                        bg-white
+                        pl-11
+                        pr-4
+                        text-sm
+                        font-medium
+                        text-[#10275F]
+                        outline-none
+                        transition
+                        placeholder:text-[#94A3B8]
+                        focus:border-[#1D55B8]
+                        focus:ring-4
+                        focus:ring-[#1D55B8]/10
+                        disabled:cursor-not-allowed
+                        disabled:bg-slate-50
+                      "
+                    />
+
+                  </div>
+
+                  <p className="mt-2 text-xs text-[#64748B]">
+                    Use 8–128 characters.
+                  </p>
+
+                </div>
+
+                {/* CONFIRM PASSWORD */}
+
+                <div>
+
+                  <label
+                    htmlFor="confirm-password"
+                    className="mb-2 block text-sm font-bold text-[#10275F]"
+                  >
+                    Confirm New Password
+                  </label>
+
+                  <div className="relative">
+
+                    <LockKeyhole
+                      size={18}
+                      className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[#1D55B8]"
+                    />
+
+                    <input
+                      id="confirm-password"
+                      type="password"
+                      value={confirmPassword}
+                      onChange={(event) =>
+                        setConfirmPassword(
+                          event.target.value
+                        )
+                      }
+                      disabled={isLoading}
+                      minLength={8}
+                      maxLength={128}
+                      autoComplete="new-password"
+                      placeholder="Confirm new password"
+                      className="
+                        h-12
+                        w-full
+                        rounded-xl
+                        border
+                        border-[#D5E2F7]
+                        bg-white
+                        pl-11
+                        pr-4
+                        text-sm
+                        font-medium
+                        text-[#10275F]
+                        outline-none
+                        transition
+                        placeholder:text-[#94A3B8]
+                        focus:border-[#1D55B8]
+                        focus:ring-4
+                        focus:ring-[#1D55B8]/10
+                        disabled:cursor-not-allowed
+                        disabled:bg-slate-50
+                      "
+                    />
+
+                  </div>
+
+                </div>
+
+                {/* SUBMIT */}
+
+                <button
+                  type="submit"
+                  disabled={isLoading}
+                  className="
+                    inline-flex
+                    h-12
+                    w-full
+                    items-center
+                    justify-center
+                    gap-2
+                    rounded-xl
+                    bg-[#102D72]
+                    px-5
+                    text-sm
+                    font-bold
+                    text-white
+                    shadow-lg
+                    transition
+                    hover:bg-[#0C245C]
+                    disabled:cursor-not-allowed
+                    disabled:opacity-60
+                  "
+                >
+
+                  {isLoading ? (
+                    <>
+                      <Loader2
+                        size={18}
+                        className="animate-spin"
+                      />
+                      Resetting Password...
+                    </>
+                  ) : (
+                    <>
+                      Reset Password
+                      <ArrowRight size={17} />
+                    </>
+                  )}
+
+                </button>
+
+              </form>
+
             </div>
 
-            {/* Footer */}
-
-            <p className="mt-6 text-center text-xs text-slate-400">
+            <p className="mt-7 text-center text-xs text-[#94A3B8]">
               © 2026 Dangote Group. All rights reserved.
             </p>
 
           </div>
 
-        </section>
+        </div>
 
       </div>
-    </main>
+
+    </div>
+  );
+}
+
+/* =====================================================
+   PAGE
+===================================================== */
+
+export default function ResetPasswordPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center bg-[#F4F7FC]">
+          <div className="flex flex-col items-center gap-3 text-[#64748B]">
+            <Loader2
+              size={30}
+              className="animate-spin text-[#1D55B8]"
+            />
+
+            <p className="text-sm font-medium">
+              Loading password reset...
+            </p>
+          </div>
+        </div>
+      }
+    >
+      <ResetPasswordContent />
+    </Suspense>
   );
 }
