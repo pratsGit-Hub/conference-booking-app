@@ -7,6 +7,7 @@ import {
   cancelMyBooking,
   getAllBookings,
   adminCancelBooking,
+  adminEditBooking,
 } from "../controllers/bookingController.js";
 
 import { requireAuth } from "../middleware/authMiddleware.js";
@@ -19,7 +20,9 @@ const router = Router();
    ROOM AVAILABILITY
 
    IMPORTANT:
+
    Keep this BEFORE "/:id" routes.
+
 ===================================================== */
 
 router.get(
@@ -67,6 +70,17 @@ router.get(
   requireAuth,
   requireRole("ADMIN"),
   getAllBookings
+);
+
+/* =====================================================
+   ADMIN - EDIT BOOKING
+===================================================== */
+
+router.patch(
+  "/:id/edit",
+  requireAuth,
+  requireRole("ADMIN"),
+  adminEditBooking
 );
 
 /* =====================================================

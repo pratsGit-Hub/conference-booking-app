@@ -69,7 +69,9 @@ interface PopulatedBooking {
   user:
     | {
         _id: unknown;
+
         name: string;
+
         email: string;
 
         notifications?: {
@@ -83,7 +85,9 @@ interface PopulatedBooking {
   room:
     | {
         _id: unknown;
+
         name: string;
+
         location: string;
       }
     | null;
@@ -202,6 +206,223 @@ async function sendEmail({
     text,
     html,
   });
+}
+
+/* =====================================================
+   PASSWORD RESET EMAIL
+===================================================== */
+
+export async function sendPasswordResetEmail({
+  to,
+  name,
+  resetUrl,
+}: {
+  to: string;
+  name: string;
+  resetUrl: string;
+}): Promise<void> {
+  try {
+    if (!transporter) {
+      console.warn(
+        "Email is not configured. Skipping password reset email."
+      );
+
+      return;
+    }
+
+    const safeName =
+      escapeHtml(name || "Employee");
+
+    const safeResetUrl =
+      escapeHtml(resetUrl);
+
+    const subject =
+      "Reset Your Conference Room Booking Password";
+
+    const html = `
+      <div
+        style="
+          font-family: Arial, sans-serif;
+          background:#f5f7f9;
+          padding:32px;
+        "
+      >
+        <div
+          style="
+            max-width:650px;
+            margin:auto;
+            background:white;
+            border-radius:12px;
+            overflow:hidden;
+            border:1px solid #e5e7eb;
+          "
+        >
+
+          <!-- HEADER -->
+
+          <div
+            style="
+              background:#10275F;
+              padding:24px;
+            "
+          >
+            <h1
+              style="
+                margin:0;
+                color:white;
+                font-size:24px;
+              "
+            >
+              Password Reset
+            </h1>
+          </div>
+
+          <!-- CONTENT -->
+
+          <div style="padding:30px;">
+
+            <p
+              style="
+                font-size:16px;
+                color:#333;
+              "
+            >
+              Hello ${safeName},
+            </p>
+
+            <p
+              style="
+                font-size:15px;
+                line-height:1.6;
+                color:#555;
+              "
+            >
+              We received a request to reset your
+              Conference Room Booking account password.
+            </p>
+
+            <p
+              style="
+                font-size:15px;
+                line-height:1.6;
+                color:#555;
+              "
+            >
+              Click the button below to create a new password.
+            </p>
+
+            <!-- RESET BUTTON -->
+
+            <div
+              style="
+                text-align:center;
+                margin:30px 0;
+              "
+            >
+              <a
+                href="${safeResetUrl}"
+                style="
+                  display:inline-block;
+                  background:#10275F;
+                  color:white;
+                  text-decoration:none;
+                  padding:14px 26px;
+                  border-radius:10px;
+                  font-weight:bold;
+                  font-size:15px;
+                "
+              >
+                Reset Password
+              </a>
+            </div>
+
+            <!-- EXPIRY -->
+
+            <p
+              style="
+                font-size:14px;
+                line-height:1.6;
+                color:#666;
+              "
+            >
+              This password reset link will expire in
+              <strong>15 minutes</strong>.
+            </p>
+
+            <!-- SECURITY MESSAGE -->
+
+            <p
+              style="
+                font-size:14px;
+                line-height:1.6;
+                color:#666;
+              "
+            >
+              If you did not request a password reset,
+              you can safely ignore this email.
+            </p>
+
+            <hr
+              style="
+                border:none;
+                border-top:1px solid #eee;
+                margin:28px 0;
+              "
+            />
+
+            <p
+              style="
+                font-size:12px;
+                line-height:1.5;
+                color:#999;
+              "
+            >
+              This is an automated email from the
+              Conference Room Booking System.
+            </p>
+
+          </div>
+
+        </div>
+      </div>
+    `;
+
+    /* =================================================
+       PLAIN TEXT EMAIL
+    ================================================= */
+
+    const text = `
+Hello ${name || "Employee"},
+
+We received a request to reset your Conference Room Booking account password.
+
+Reset your password using the link below:
+
+${resetUrl}
+
+This password reset link will expire in 15 minutes.
+
+If you did not request a password reset, you can safely ignore this email.
+
+Conference Room Booking System
+`;
+
+    await sendEmail({
+      to,
+      subject,
+      html,
+      text,
+    });
+
+    console.log(
+      `Password reset email sent to ${to}`
+    );
+  } catch (error) {
+    console.error(
+      "Password reset email error:",
+      error
+    );
+  }
 }
 
 /* =====================================================
@@ -486,6 +707,460 @@ Conference Room Booking System
 }
 
 /* =====================================================
+   BOOKING UPDATED — ADMIN
+===================================================== */
+
+export async function
+sendBookingUpdatedEmails(
+  bookingId: unknown,
+  previousBooking: {
+    oldRoomName: string;
+    oldDate: string;
+    oldStartTime: string;
+    oldEndTime: string;
+  }
+): Promise<void> {
+  try {
+    if (!transporter) {
+      return;
+    }
+
+    /* ---------------------------------------------
+       GET UPDATED BOOKING
+    --------------------------------------------- */
+
+    const booking =
+      await getBooking(
+        bookingId
+      );
+
+    if (!booking) {
+      console.error(
+        "Booking update email: booking not found"
+      );
+
+      return;
+    }
+
+    if (!booking.user) {
+      console.error(
+        "Booking update email: user not found"
+      );
+
+      return;
+    }
+
+    const user =
+      booking.user;
+
+    const roomName =
+      booking.room?.name ||
+      "Conference Room";
+
+    const newDate =
+      formatBookingDate(
+        booking.date
+      );
+
+    const oldDate =
+      formatBookingDate(
+        previousBooking.oldDate
+      );
+
+    const subject =
+      `Booking Updated - ${roomName} - ${booking.date}`;
+
+    /* ---------------------------------------------
+       UPDATED BOOKING DETAILS
+    --------------------------------------------- */
+
+    const html = `
+      <div
+        style="
+          font-family:Arial,sans-serif;
+          background:#f5f7f9;
+          padding:32px;
+        "
+      >
+
+        <div
+          style="
+            max-width:650px;
+            margin:auto;
+            background:white;
+            border-radius:12px;
+            overflow:hidden;
+            border:1px solid #e5e7eb;
+          "
+        >
+
+          <!-- HEADER -->
+
+          <div
+            style="
+              background:#10275F;
+              padding:24px;
+            "
+          >
+            <h1
+              style="
+                margin:0;
+                color:white;
+                font-size:24px;
+              "
+            >
+              Booking Updated
+            </h1>
+          </div>
+
+          <!-- CONTENT -->
+
+          <div
+            style="
+              padding:30px;
+            "
+          >
+
+            <p
+              style="
+                font-size:16px;
+                color:#333;
+              "
+            >
+              Hello ${escapeHtml(
+                user.name
+              )},
+            </p>
+
+            <p
+              style="
+                font-size:15px;
+                line-height:1.6;
+                color:#555;
+              "
+            >
+              Your conference room booking has been
+              updated by an administrator.
+            </p>
+
+            <!-- NEW BOOKING -->
+
+            <div
+              style="
+                margin-top:24px;
+                border:1px solid #e5e7eb;
+                border-radius:10px;
+                overflow:hidden;
+              "
+            >
+
+              <div
+                style="
+                  background:#f8fafc;
+                  padding:14px 16px;
+                  border-bottom:1px solid #e5e7eb;
+                "
+              >
+                <strong>
+                  Updated Booking Details
+                </strong>
+              </div>
+
+              <div
+                style="
+                  padding:16px;
+                  border-bottom:1px solid #e5e7eb;
+                "
+              >
+                <strong>Meeting</strong>
+
+                <div
+                  style="
+                    margin-top:5px;
+                    color:#555;
+                  "
+                >
+                  ${escapeHtml(
+                    booking.title
+                  )}
+                </div>
+              </div>
+
+              <div
+                style="
+                  padding:16px;
+                  border-bottom:1px solid #e5e7eb;
+                "
+              >
+                <strong>Room</strong>
+
+                <div
+                  style="
+                    margin-top:5px;
+                    color:#555;
+                  "
+                >
+                  ${escapeHtml(
+                    roomName
+                  )}
+                </div>
+              </div>
+
+              <div
+                style="
+                  padding:16px;
+                  border-bottom:1px solid #e5e7eb;
+                "
+              >
+                <strong>Location</strong>
+
+                <div
+                  style="
+                    margin-top:5px;
+                    color:#555;
+                  "
+                >
+                  ${escapeHtml(
+                    booking.room?.location ||
+                      ""
+                  )}
+                </div>
+              </div>
+
+              <div
+                style="
+                  padding:16px;
+                  border-bottom:1px solid #e5e7eb;
+                "
+              >
+                <strong>Date</strong>
+
+                <div
+                  style="
+                    margin-top:5px;
+                    color:#555;
+                  "
+                >
+                  ${newDate}
+                </div>
+              </div>
+
+              <div
+                style="
+                  padding:16px;
+                "
+              >
+                <strong>Time</strong>
+
+                <div
+                  style="
+                    margin-top:5px;
+                    color:#555;
+                  "
+                >
+                  ${booking.startTime}
+                  -
+                  ${booking.endTime}
+                </div>
+              </div>
+
+            </div>
+
+            <!-- PREVIOUS DETAILS -->
+
+            <div
+              style="
+                margin-top:24px;
+                padding:20px;
+                background:#fff7ed;
+                border:1px solid #fed7aa;
+                border-radius:10px;
+              "
+            >
+
+              <strong
+                style="
+                  color:#9a3412;
+                "
+              >
+                Previous Booking Details
+              </strong>
+
+              <div
+                style="
+                  margin-top:14px;
+                  font-size:14px;
+                  line-height:1.8;
+                  color:#555;
+                "
+              >
+                <div>
+                  <strong>Room:</strong>
+                  ${escapeHtml(
+                    previousBooking.oldRoomName
+                  )}
+                </div>
+
+                <div>
+                  <strong>Date:</strong>
+                  ${oldDate}
+                </div>
+
+                <div>
+                  <strong>Time:</strong>
+                  ${escapeHtml(
+                    previousBooking.oldStartTime
+                  )}
+                  -
+                  ${escapeHtml(
+                    previousBooking.oldEndTime
+                  )}
+                </div>
+              </div>
+
+            </div>
+
+            <p
+              style="
+                margin-top:24px;
+                font-size:14px;
+                line-height:1.6;
+                color:#666;
+              "
+            >
+              Please review the updated booking details
+              and make a note of the new meeting schedule.
+            </p>
+
+          </div>
+
+          <!-- FOOTER -->
+
+          <div
+            style="
+              background:#f8fafc;
+              padding:18px 30px;
+            "
+          >
+            <p
+              style="
+                margin:0;
+                font-size:12px;
+                color:#888;
+              "
+            >
+              This is an automated email from the
+              Conference Room Booking System.
+            </p>
+          </div>
+
+        </div>
+
+      </div>
+    `;
+
+    /* ---------------------------------------------
+       PLAIN TEXT EMAIL
+    --------------------------------------------- */
+
+    const text = `
+Hello ${user.name},
+
+Your conference room booking has been updated by an administrator.
+
+UPDATED BOOKING DETAILS
+
+Meeting: ${booking.title}
+Room: ${roomName}
+Location: ${booking.room?.location || ""}
+Date: ${newDate}
+Time: ${booking.startTime} - ${booking.endTime}
+
+PREVIOUS BOOKING DETAILS
+
+Room: ${previousBooking.oldRoomName}
+Date: ${oldDate}
+Time: ${previousBooking.oldStartTime} - ${previousBooking.oldEndTime}
+
+Please review the updated booking details.
+
+Conference Room Booking System
+`;
+
+    /* =================================================
+       USER EMAIL
+    ================================================= */
+
+    const userEmailEnabled =
+      user.notifications
+        ?.bookingConfirmation !== false;
+
+    if (
+      user.email &&
+      userEmailEnabled
+    ) {
+      await sendEmail({
+        to: user.email,
+        subject,
+        html,
+        text,
+      });
+
+      console.log(
+        `Booking update email sent to ${user.email}`
+      );
+    }
+
+    /* =================================================
+       ADMIN EMAILS
+    ================================================= */
+
+    const admins =
+      await User.find({
+        role: "ADMIN",
+        email: {
+          $exists: true,
+          $ne: "",
+        },
+      })
+        .select(
+          "name email"
+        )
+        .lean();
+
+    await Promise.all(
+      admins
+        .filter(
+          (admin) =>
+            Boolean(
+              admin.email
+            )
+        )
+        .map(
+          async (admin) => {
+            await sendEmail({
+              to: admin.email,
+              subject:
+                `Booking Updated by Administrator - ${roomName}`,
+              html,
+              text,
+            });
+
+            console.log(
+              `Booking update email sent to admin ${admin.email}`
+            );
+          }
+        )
+    );
+  } catch (error) {
+    console.error(
+      "Booking update email error:",
+      error
+    );
+  }
+}
+
+/* =====================================================
    BOOKING CANCELLED
 ===================================================== */
 
@@ -620,7 +1295,9 @@ Conference Room Booking System
       admins
         .filter(
           (admin) =>
-            Boolean(admin.email)
+            Boolean(
+              admin.email
+            )
         )
         .map(
           async (admin) => {

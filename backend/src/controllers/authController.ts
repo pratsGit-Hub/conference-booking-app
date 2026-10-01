@@ -1,5 +1,6 @@
 import { Response } from "express";
 import { z } from "zod";
+import crypto from "crypto";
 
 import {
   AuthenticatedRequest,
@@ -13,6 +14,8 @@ import {
 } from "../utils/password.js";
 
 import { generateToken } from "../utils/jwt.js";
+
+import { sendPasswordResetEmail } from "../utils/emailService.js";
 
 /* =====================================================
    COMPANY EMAIL DOMAIN
@@ -49,6 +52,54 @@ const changePasswordSchema = z
     currentPassword: z
       .string()
       .min(1, "Current password is required"),
+
+    newPassword: z
+      .string()
+      .min(
+        8,
+        "New password must be at least 8 characters"
+      )
+      .max(
+        128,
+        "New password cannot exceed 128 characters"
+      ),
+
+    confirmPassword: z
+      .string()
+      .min(
+        1,
+        "Please confirm your new password"
+      ),
+  })
+  .refine(
+    (data) =>
+      data.newPassword ===
+      data.confirmPassword,
+    {
+      message:
+        "New password and confirmation password do not match",
+      path: ["confirmPassword"],
+    }
+  );
+
+/* =====================================================
+   FORGOT PASSWORD VALIDATION
+===================================================== */
+
+const forgotPasswordSchema = z.object({
+  email: z.string().trim().email(),
+});
+
+/* =====================================================
+   RESET PASSWORD VALIDATION
+===================================================== */
+
+const resetPasswordSchema = z
+  .object({
+    token: z
+      .string()
+      .trim()
+      .min(1, "Reset token is required"),
 
     newPassword: z
       .string()
@@ -577,6 +628,301 @@ export async function changePassword(
       success: false,
       message:
         "Something went wrong",
+    });
+  }
+}
+
+/* =====================================================
+   FORGOT PASSWORD
+===================================================== */
+
+export async function forgotPassword(
+  req: AuthenticatedRequest,
+  res: Response
+) {
+  try {
+    /* ---------- Validate request ---------- */
+
+    const result =
+      forgotPasswordSchema.safeParse(
+        req.body
+      );
+
+    if (!result.success) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Please provide a valid email address",
+      });
+    }
+
+    /* ---------- Normalize email ---------- */
+
+    const normalizedEmail =
+      result.data.email
+        .trim()
+        .toLowerCase();
+
+    /* =================================================
+       IMPORTANT:
+       Always return the same response for valid
+       email requests.
+
+       This prevents attackers from discovering
+       whether a company email has an account.
+    ================================================= */
+
+    const genericResponse = {
+      success: true,
+      message:
+        "If an account exists for this email, a password reset link has been sent.",
+    };
+
+    /* ---------- Check company email ---------- */
+
+    if (
+      !isDangoteEmail(
+        normalizedEmail
+      )
+    ) {
+      return res.status(200).json(
+        genericResponse
+      );
+    }
+
+    /* ---------- Find user ---------- */
+
+    const user =
+      await User.findOne({
+        email: normalizedEmail,
+      });
+
+    /*
+      Do not reveal whether the account exists.
+    */
+
+    if (!user) {
+      return res.status(200).json(
+        genericResponse
+      );
+    }
+
+    /* ---------- Generate secure token ---------- */
+
+    const resetToken =
+      crypto.randomBytes(32).toString("hex");
+
+    /* ---------- Hash token before storing ---------- */
+
+    const resetTokenHash =
+      crypto
+        .createHash("sha256")
+        .update(resetToken)
+        .digest("hex");
+
+    /* ---------- Token expiry ---------- */
+
+    const resetTokenExpiresAt =
+      new Date(
+        Date.now() +
+          15 * 60 * 1000
+      );
+
+    /* ---------- Store hashed token ---------- */
+
+    user.passwordResetTokenHash =
+      resetTokenHash;
+
+    user.passwordResetExpiresAt =
+      resetTokenExpiresAt;
+
+    await user.save();
+
+    /* ---------- Create frontend reset URL ---------- */
+
+    const frontendUrl =
+      process.env.FRONTEND_URL ||
+      "http://localhost:3000";
+
+    const resetUrl =
+      `${frontendUrl}/reset-password?token=${resetToken}`;
+
+    /* ---------- Send reset email ---------- */
+
+    await sendPasswordResetEmail({
+      to: user.email,
+      name: user.name,
+      resetUrl,
+    });
+
+    /* ---------- Generic response ---------- */
+
+    return res.status(200).json(
+      genericResponse
+    );
+  } catch (error) {
+    console.error(
+      "Forgot password error:",
+      error
+    );
+
+    /*
+      Do not reveal account information
+      through the error response.
+    */
+
+    return res.status(200).json({
+      success: true,
+      message:
+        "If an account exists for this email, a password reset link has been sent.",
+    });
+  }
+}
+
+/* =====================================================
+   RESET PASSWORD
+===================================================== */
+
+export async function resetPassword(
+  req: AuthenticatedRequest,
+  res: Response
+) {
+  try {
+    /* ---------- Validate request ---------- */
+
+    const result =
+      resetPasswordSchema.safeParse(
+        req.body
+      );
+
+    if (!result.success) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Invalid password reset data",
+        errors:
+          result.error.flatten(),
+      });
+    }
+
+    const {
+      token,
+      newPassword,
+    } = result.data;
+
+    /* ---------- Hash received token ---------- */
+
+    const resetTokenHash =
+      crypto
+        .createHash("sha256")
+        .update(token)
+        .digest("hex");
+
+    /* ---------- Find user with reset fields ---------- */
+
+    const user =
+      await User.findOne({
+        passwordResetTokenHash:
+          resetTokenHash,
+
+        passwordResetExpiresAt: {
+          $gt: new Date(),
+        },
+      }).select(
+        "+passwordResetTokenHash +passwordResetExpiresAt +passwordHash"
+      );
+
+    /* ---------- Validate token ---------- */
+
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "This password reset link is invalid or has expired.",
+      });
+    }
+
+    /* ---------- Prevent password reuse ---------- */
+
+    const samePassword =
+      await comparePassword(
+        newPassword,
+        user.passwordHash
+      );
+
+    if (samePassword) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "New password must be different from your current password",
+      });
+    }
+
+    /* ---------- Hash new password ---------- */
+
+    const newPasswordHash =
+      await hashPassword(
+        newPassword
+      );
+
+    /* ---------- Update password ---------- */
+
+    user.passwordHash =
+      newPasswordHash;
+
+    /* =================================================
+       IMPORTANT:
+       Clear reset token after successful reset.
+
+       This makes the reset link single-use.
+    ================================================= */
+
+    user.passwordResetTokenHash =
+      null;
+
+    user.passwordResetExpiresAt =
+      null;
+
+    await user.save();
+
+    /* ---------- Clear existing authentication cookie ---------- */
+
+    res.clearCookie(
+      "access_token",
+      {
+        httpOnly: true,
+
+        secure:
+          process.env.NODE_ENV ===
+          "production",
+
+        sameSite:
+          process.env.NODE_ENV ===
+          "production"
+            ? "none"
+            : "lax",
+
+        path: "/",
+      }
+    );
+
+    /* ---------- Response ---------- */
+
+    return res.status(200).json({
+      success: true,
+      message:
+        "Password reset successfully. Please log in with your new password.",
+    });
+  } catch (error) {
+    console.error(
+      "Reset password error:",
+      error
+    );
+
+    return res.status(500).json({
+      success: false,
+      message:
+        "Something went wrong while resetting your password",
     });
   }
 }

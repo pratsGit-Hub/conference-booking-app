@@ -15,6 +15,7 @@ import {
 import {
   sendBookingCreatedEmails,
   sendBookingCancelledEmails,
+  sendBookingUpdatedEmails,
 } from "../utils/emailService.js";
 
 /* =====================================================
@@ -98,10 +99,6 @@ const SLOT_MINUTES = 15;
 
 /**
  * Convert HH:mm to minutes.
- *
- * Example:
- *
- * 10:30 → 630
  */
 function timeToMinutes(
   time: string
@@ -119,10 +116,6 @@ function timeToMinutes(
 
 /**
  * Convert minutes to HH:mm.
- *
- * Example:
- *
- * 630 → 10:30
  */
 function minutesToTime(
   totalMinutes: number
@@ -146,19 +139,6 @@ function minutesToTime(
 
 /**
  * Generate occupied 15-minute slots.
- *
- * Example:
- *
- * 10:00 → 11:00
- *
- * returns:
- *
- * [
- *   "10:00",
- *   "10:15",
- *   "10:30",
- *   "10:45"
- * ]
  */
 function generateOccupiedSlots(
   startTime: string,
@@ -262,45 +242,70 @@ const createBookingSchema =
   });
 
 /* =====================================================
+   ADMIN EDIT BOOKING VALIDATION
+===================================================== */
+
+const editBookingSchema =
+  z.object({
+    roomId: z
+      .string()
+      .min(
+        1,
+        "Room is required"
+      ),
+
+    title: z
+      .string()
+      .trim()
+      .min(
+        2,
+        "Title must be at least 2 characters"
+      )
+      .max(
+        200,
+        "Title is too long"
+      ),
+
+    date: z
+      .string()
+      .regex(
+        /^\d{4}-\d{2}-\d{2}$/,
+        "Date must be in YYYY-MM-DD format"
+      ),
+
+    startTime: z
+      .string()
+      .regex(
+        /^([01]\d|2[0-3]):([0-5]\d)$/,
+        "Start time must be in HH:mm format"
+      ),
+
+    endTime: z
+      .string()
+      .regex(
+        /^([01]\d|2[0-3]):([0-5]\d)$/,
+        "End time must be in HH:mm format"
+      ),
+
+    description: z
+      .string()
+      .trim()
+      .max(
+        1000,
+        "Description is too long"
+      )
+      .optional(),
+  });
+
+/* =====================================================
    GET ROOM AVAILABILITY
 ===================================================== */
 
-/**
- * Check which rooms are already booked
- * for a selected date and time range.
- *
- * Frontend request:
- *
- * GET /api/bookings/availability
- *
- * Example:
- *
- * /api/bookings/availability
- *   ?date=2026-09-25
- *   &startTime=10:00
- *   &endTime=11:00
- *
- * Response:
- *
- * {
- *   success: true,
- *   date: "2026-09-25",
- *   startTime: "10:00",
- *   endTime: "11:00",
- *   bookedRoomIds: [...],
- *   bookedRooms: [...],
- *   availableRooms: [...]
- * }
- */
 export async function getRoomAvailability(
   req: AuthenticatedRequest,
   res: Response
 ) {
   try {
-    /* ---------------------------------------------
-       AUTHENTICATION
-    --------------------------------------------- */
-
     if (!req.user) {
       return res.status(401).json({
         success: false,
@@ -308,10 +313,6 @@ export async function getRoomAvailability(
           "Authentication required",
       });
     }
-
-    /* ---------------------------------------------
-       READ QUERY PARAMETERS
-    --------------------------------------------- */
 
     const date =
       typeof req.query.date ===
@@ -331,10 +332,6 @@ export async function getRoomAvailability(
         ? req.query.endTime
         : "";
 
-    /* ---------------------------------------------
-       VALIDATE DATE FORMAT
-    --------------------------------------------- */
-
     if (
       !/^\d{4}-\d{2}-\d{2}$/.test(
         date
@@ -346,10 +343,6 @@ export async function getRoomAvailability(
           "Date must be in YYYY-MM-DD format",
       });
     }
-
-    /* ---------------------------------------------
-       VALIDATE DATE ACTUALLY EXISTS
-    --------------------------------------------- */
 
     const dateParts =
       date
@@ -387,10 +380,6 @@ export async function getRoomAvailability(
       });
     }
 
-    /* ---------------------------------------------
-       VALIDATE TIME FORMAT
-    --------------------------------------------- */
-
     const timeRegex =
       /^([01]\d|2[0-3]):([0-5]\d)$/;
 
@@ -414,10 +403,6 @@ export async function getRoomAvailability(
       });
     }
 
-    /* ---------------------------------------------
-       CONVERT TIMES TO MINUTES
-    --------------------------------------------- */
-
     const startMinutes =
       timeToMinutes(
         startTime
@@ -427,10 +412,6 @@ export async function getRoomAvailability(
       timeToMinutes(
         endTime
       );
-
-    /* ---------------------------------------------
-       VALIDATE TIME RANGE
-    --------------------------------------------- */
 
     if (
       startMinutes >=
@@ -442,10 +423,6 @@ export async function getRoomAvailability(
           "End time must be later than start time",
       });
     }
-
-    /* ---------------------------------------------
-       REQUIRE 15-MINUTE BOUNDARIES
-    --------------------------------------------- */
 
     if (
       !isValidSlotBoundary(
@@ -462,10 +439,6 @@ export async function getRoomAvailability(
       });
     }
 
-    /* ---------------------------------------------
-       PREVENT PAST DATE
-    --------------------------------------------- */
-
     const {
       date: today,
       time: currentTime,
@@ -480,16 +453,6 @@ export async function getRoomAvailability(
       });
     }
 
-    /* ---------------------------------------------
-       PREVENT PAST TIME TODAY
-
-       IMPORTANT:
-       Compare START TIME, not END TIME.
-
-       This keeps availability validation
-       consistent with createBooking().
-    --------------------------------------------- */
-
     if (
       date === today &&
       startTime <= currentTime
@@ -501,10 +464,6 @@ export async function getRoomAvailability(
       });
     }
 
-    /* ---------------------------------------------
-       GET ACTIVE ROOMS
-    --------------------------------------------- */
-
     const activeRooms =
       await Room.find({
         isActive: true,
@@ -513,38 +472,6 @@ export async function getRoomAvailability(
           "_id name capacity location description facilities isActive"
         )
         .lean();
-
-    /* ---------------------------------------------
-       FIND CONFLICTING BOOKINGS
-
-       A booking conflicts when:
-
-       existing.startTime < requested.endTime
-
-       AND
-
-       existing.endTime > requested.startTime
-
-       Example:
-
-       Existing:
-       10:00 - 11:00
-
-       Requested:
-       10:30 - 11:30
-
-       CONFLICT ❌
-
-       Example:
-
-       Existing:
-       10:00 - 11:00
-
-       Requested:
-       11:00 - 12:00
-
-       NO CONFLICT ✅
-    --------------------------------------------- */
 
     const conflictingBookings =
       await Booking.find({
@@ -567,10 +494,6 @@ export async function getRoomAvailability(
         )
         .lean();
 
-    /* ---------------------------------------------
-       CREATE UNIQUE BOOKED ROOM IDS
-    --------------------------------------------- */
-
     const bookedRoomIds =
       Array.from(
         new Set(
@@ -582,10 +505,6 @@ export async function getRoomAvailability(
           )
         )
       );
-
-    /* ---------------------------------------------
-       BOOKED ROOM DETAILS
-    --------------------------------------------- */
 
     const bookedRooms =
       conflictingBookings.map(
@@ -605,10 +524,6 @@ export async function getRoomAvailability(
         })
       );
 
-    /* ---------------------------------------------
-       AVAILABLE ROOMS
-    --------------------------------------------- */
-
     const availableRooms =
       activeRooms.filter(
         (room) =>
@@ -616,10 +531,6 @@ export async function getRoomAvailability(
             String(room._id)
           )
       );
-
-    /* ---------------------------------------------
-       RESPONSE
-    --------------------------------------------- */
 
     return res.status(200).json({
       success: true,
@@ -659,10 +570,6 @@ export async function createBooking(
   res: Response
 ) {
   try {
-    /* ---------------------------------------------
-       AUTHENTICATION
-    --------------------------------------------- */
-
     if (!req.user) {
       return res.status(401).json({
         success: false,
@@ -670,10 +577,6 @@ export async function createBooking(
           "Authentication required",
       });
     }
-
-    /* ---------------------------------------------
-       VALIDATE REQUEST
-    --------------------------------------------- */
 
     const result =
       createBookingSchema.safeParse(
@@ -699,10 +602,6 @@ export async function createBooking(
       description,
     } = result.data;
 
-    /* ---------------------------------------------
-       VALIDATE ROOM ID
-    --------------------------------------------- */
-
     if (
       !isValidObjectId(
         roomId
@@ -715,12 +614,10 @@ export async function createBooking(
       });
     }
 
-    /* ---------------------------------------------
-       VALIDATE DATE
-    --------------------------------------------- */
-
     const dateParts =
-      date.split("-").map(Number);
+      date
+        .split("-")
+        .map(Number);
 
     const [
       year,
@@ -753,10 +650,6 @@ export async function createBooking(
       });
     }
 
-    /* ---------------------------------------------
-       PREVENT PAST DATES
-    --------------------------------------------- */
-
     const {
       date: today,
       time: currentTime,
@@ -770,10 +663,6 @@ export async function createBooking(
           "You cannot book a room for a past date",
       });
     }
-
-    /* ---------------------------------------------
-       VALIDATE TIME RANGE
-    --------------------------------------------- */
 
     const startMinutes =
       timeToMinutes(
@@ -796,10 +685,6 @@ export async function createBooking(
       });
     }
 
-    /* ---------------------------------------------
-       REQUIRE 15-MINUTE BOUNDARIES
-    --------------------------------------------- */
-
     if (
       !isValidSlotBoundary(
         startTime
@@ -815,10 +700,6 @@ export async function createBooking(
       });
     }
 
-    /* ---------------------------------------------
-       PREVENT PAST TIME TODAY
-    --------------------------------------------- */
-
     if (
       date === today &&
       startTime <= currentTime
@@ -829,10 +710,6 @@ export async function createBooking(
           "You cannot book a time that has already passed",
       });
     }
-
-    /* ---------------------------------------------
-       FIND ACTIVE ROOM
-    --------------------------------------------- */
 
     const room =
       await Room.findOne({
@@ -847,10 +724,6 @@ export async function createBooking(
           "Room not found or is currently unavailable",
       });
     }
-
-    /* ---------------------------------------------
-       GENERATE PROTECTED TIME SLOTS
-    --------------------------------------------- */
 
     const occupiedSlots =
       generateOccupiedSlots(
@@ -867,10 +740,6 @@ export async function createBooking(
           "Invalid booking duration",
       });
     }
-
-    /* ---------------------------------------------
-       FAST CONFLICT CHECK
-    --------------------------------------------- */
 
     const conflictingBooking =
       await Booking.findOne({
@@ -898,10 +767,6 @@ export async function createBooking(
           "This room is already booked for the selected time",
       });
     }
-
-    /* ---------------------------------------------
-       CREATE BOOKING
-    --------------------------------------------- */
 
     let booking;
 
@@ -933,10 +798,6 @@ export async function createBooking(
             "UPCOMING",
         });
     } catch (error: unknown) {
-      /* -----------------------------------------
-         MONGODB DUPLICATE KEY ERROR
-      ----------------------------------------- */
-
       if (
         typeof error ===
           "object" &&
@@ -958,10 +819,6 @@ export async function createBooking(
       throw error;
     }
 
-    /* =================================================
-       IN-APP BOOKING NOTIFICATION
-    ================================================= */
-
     void createNotificationIfEnabled({
       userId:
         req.user.userId,
@@ -981,28 +838,9 @@ export async function createBooking(
         booking._id.toString(),
     });
 
-    /* =================================================
-       EMAIL NOTIFICATION
-
-       IMPORTANT:
-
-       emailService gets the user's email dynamically
-       from:
-
-       booking.user → User → User.email
-
-       No employee email is hardcoded here.
-
-       It also finds all ADMIN users dynamically.
-    ================================================= */
-
     void sendBookingCreatedEmails(
       booking._id
     );
-
-    /* ---------------------------------------------
-       POPULATE BOOKING
-    --------------------------------------------- */
 
     const populatedBooking =
       await Booking.findById(
@@ -1016,10 +854,6 @@ export async function createBooking(
           "user",
           "name email department"
         );
-
-    /* ---------------------------------------------
-       RESPONSE
-    --------------------------------------------- */
 
     return res.status(201).json({
       success: true,
@@ -1053,10 +887,6 @@ export async function getMyBookings(
   res: Response
 ) {
   try {
-    /* ---------------------------------------------
-       AUTHENTICATION
-    --------------------------------------------- */
-
     if (!req.user) {
       return res.status(401).json({
         success: false,
@@ -1064,10 +894,6 @@ export async function getMyBookings(
           "Authentication required",
       });
     }
-
-    /* ---------------------------------------------
-       GET USER BOOKINGS
-    --------------------------------------------- */
 
     const bookings =
       await Booking.find({
@@ -1110,10 +936,6 @@ export async function cancelMyBooking(
   res: Response
 ) {
   try {
-    /* ---------------------------------------------
-       AUTHENTICATION
-    --------------------------------------------- */
-
     if (!req.user) {
       return res.status(401).json({
         success: false,
@@ -1122,16 +944,8 @@ export async function cancelMyBooking(
       });
     }
 
-    /* ---------------------------------------------
-       GET BOOKING ID
-    --------------------------------------------- */
-
     const id: unknown =
       req.params.id;
-
-    /* ---------------------------------------------
-       VALIDATE BOOKING ID
-    --------------------------------------------- */
 
     if (
       !isValidObjectId(id)
@@ -1142,10 +956,6 @@ export async function cancelMyBooking(
           "Invalid booking ID",
       });
     }
-
-    /* ---------------------------------------------
-       FIND USER'S BOOKING
-    --------------------------------------------- */
 
     const booking =
       await Booking.findOne({
@@ -1173,27 +983,15 @@ export async function cancelMyBooking(
       });
     }
 
-    /* ---------------------------------------------
-       CANCEL BOOKING
-    --------------------------------------------- */
-
     booking.status =
       "CANCELLED";
 
     await booking.save();
 
-    /* ---------------------------------------------
-       FIND ROOM
-    --------------------------------------------- */
-
     const room =
       await Room.findById(
         booking.room
       ).select("name");
-
-    /* =================================================
-       IN-APP CANCELLATION NOTIFICATION
-    ================================================= */
 
     void createNotificationIfEnabled({
       userId:
@@ -1220,16 +1018,6 @@ export async function cancelMyBooking(
       bookingId:
         booking._id.toString(),
     });
-
-    /* =================================================
-       EMAIL CANCELLATION NOTIFICATION
-
-       emailService dynamically gets:
-
-       booking.user → User → User.email
-
-       and sends to all ADMIN users.
-    ================================================= */
 
     void sendBookingCancelledEmails(
       booking._id,
@@ -1289,6 +1077,471 @@ export async function getAllBookings(
   } catch (error) {
     console.error(
       "Get all bookings error:",
+      error
+    );
+
+    return res.status(500).json({
+      success: false,
+      message:
+        "Something went wrong",
+    });
+  }
+}
+
+/* =====================================================
+   ADMIN EDIT BOOKING
+===================================================== */
+
+export async function adminEditBooking(
+  req: AuthenticatedRequest,
+  res: Response
+) {
+  try {
+    /* ---------------------------------------------
+       AUTHENTICATION
+    --------------------------------------------- */
+
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        message:
+          "Authentication required",
+      });
+    }
+
+    /* ---------------------------------------------
+       ADMIN AUTHORIZATION
+
+       Only ADMIN users can edit bookings.
+    --------------------------------------------- */
+
+    if (
+      req.user.role !==
+      "ADMIN"
+    ) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "Admin access required",
+      });
+    }
+
+    /* ---------------------------------------------
+       BOOKING ID
+    --------------------------------------------- */
+
+    const id: unknown =
+      req.params.id;
+
+    if (
+      !isValidObjectId(id)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Invalid booking ID",
+      });
+    }
+
+    /* ---------------------------------------------
+       VALIDATE REQUEST
+    --------------------------------------------- */
+
+    const result =
+      editBookingSchema.safeParse(
+        req.body
+      );
+
+    if (!result.success) {
+      return res.status(400).json({
+        success: false,
+        message:
+          result.error.issues[0]
+            ?.message ||
+          "Invalid booking data",
+      });
+    }
+
+    const {
+      roomId,
+      title,
+      date,
+      startTime,
+      endTime,
+      description,
+    } = result.data;
+
+    /* ---------------------------------------------
+       VALIDATE ROOM ID
+    --------------------------------------------- */
+
+    if (
+      !isValidObjectId(
+        roomId
+      )
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Invalid room ID",
+      });
+    }
+
+    /* ---------------------------------------------
+       FIND BOOKING
+    --------------------------------------------- */
+
+    const booking =
+      await Booking.findById(id);
+
+    if (!booking) {
+      return res.status(404).json({
+        success: false,
+        message:
+          "Booking not found",
+      });
+    }
+
+    /* ---------------------------------------------
+       PREVENT EDITING CANCELLED BOOKING
+    --------------------------------------------- */
+
+    if (
+      booking.status ===
+      "CANCELLED"
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Cancelled bookings cannot be edited",
+      });
+    }
+
+    /* ---------------------------------------------
+       VALIDATE DATE
+    --------------------------------------------- */
+
+    const [
+      year,
+      month,
+      day,
+    ] =
+      date
+        .split("-")
+        .map(Number);
+
+    const parsedDate =
+      new Date(
+        Date.UTC(
+          year,
+          month - 1,
+          day
+        )
+      );
+
+    if (
+      Number.isNaN(
+        parsedDate.getTime()
+      ) ||
+      parsedDate
+        .toISOString()
+        .slice(0, 10) !==
+        date
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Invalid booking date",
+      });
+    }
+
+    /* ---------------------------------------------
+       PREVENT PAST DATE
+    --------------------------------------------- */
+
+    const {
+      date: today,
+      time: currentTime,
+    } =
+      getCurrentDateAndTime();
+
+    if (date < today) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "You cannot move a booking to a past date",
+      });
+    }
+
+    /* ---------------------------------------------
+       VALIDATE TIME RANGE
+    --------------------------------------------- */
+
+    const startMinutes =
+      timeToMinutes(
+        startTime
+      );
+
+    const endMinutes =
+      timeToMinutes(
+        endTime
+      );
+
+    if (
+      startMinutes >=
+      endMinutes
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "End time must be later than start time",
+      });
+    }
+
+    /* ---------------------------------------------
+       REQUIRE 15-MINUTE BOUNDARIES
+    --------------------------------------------- */
+
+    if (
+      !isValidSlotBoundary(
+        startTime
+      ) ||
+      !isValidSlotBoundary(
+        endTime
+      )
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Booking times must be in 15-minute intervals",
+      });
+    }
+
+    /* ---------------------------------------------
+       PREVENT PAST TIME TODAY
+    --------------------------------------------- */
+
+    if (
+      date === today &&
+      startTime <= currentTime
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "You cannot move a booking to a time that has already passed",
+      });
+    }
+
+    /* ---------------------------------------------
+       FIND ACTIVE ROOM
+    --------------------------------------------- */
+
+    const room =
+      await Room.findOne({
+        _id: roomId,
+        isActive: true,
+      });
+
+    if (!room) {
+      return res.status(404).json({
+        success: false,
+        message:
+          "Room not found or is currently unavailable",
+      });
+    }
+
+    /* ---------------------------------------------
+       GENERATE OCCUPIED SLOTS
+    --------------------------------------------- */
+
+    const occupiedSlots =
+      generateOccupiedSlots(
+        startTime,
+        endTime
+      );
+
+    if (
+      occupiedSlots.length === 0
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Invalid booking duration",
+      });
+    }
+
+    /* ---------------------------------------------
+       CHECK ROOM CONFLICT
+
+       IMPORTANT:
+       $ne excludes the booking currently
+       being edited from the conflict check.
+    --------------------------------------------- */
+
+    const conflictingBooking =
+      await Booking.findOne({
+        _id: {
+          $ne:
+            booking._id,
+        },
+
+        room:
+          room._id,
+
+        date,
+
+        status: {
+          $ne: "CANCELLED",
+        },
+
+        startTime: {
+          $lt: endTime,
+        },
+
+        endTime: {
+          $gt: startTime,
+        },
+      });
+
+    if (conflictingBooking) {
+      return res.status(409).json({
+        success: false,
+        message:
+          "This room is already booked for the selected time",
+      });
+    }
+
+    /* ---------------------------------------------
+       STORE OLD BOOKING DETAILS
+
+       Used by the update email.
+    --------------------------------------------- */
+
+    const oldRoom =
+      await Room.findById(
+        booking.room
+      ).select("name");
+
+    const oldDate =
+      booking.date;
+
+    const oldStartTime =
+      booking.startTime;
+
+    const oldEndTime =
+      booking.endTime;
+
+    /* ---------------------------------------------
+       UPDATE BOOKING
+
+       IMPORTANT:
+       booking.user is NOT changed.
+
+       Therefore the original employee
+       remains the owner of the booking.
+    --------------------------------------------- */
+
+    booking.room =
+      room._id;
+
+    booking.title =
+      title.trim();
+
+    booking.date =
+      date;
+
+    booking.startTime =
+      startTime;
+
+    booking.endTime =
+      endTime;
+
+    booking.description =
+      description?.trim() ||
+      undefined;
+
+    booking.occupiedSlots =
+      occupiedSlots;
+
+    booking.status =
+      "UPCOMING";
+
+    await booking.save();
+
+    /* =================================================
+       IN-APP NOTIFICATION
+    ================================================= */
+
+    void createNotificationIfEnabled({
+      userId:
+        booking.user.toString(),
+
+      type:
+        "BOOKING_CREATED",
+
+      title:
+        "Booking updated by administrator",
+
+      message:
+        `Your booking for ${room.name} ` +
+        `on ${date} from ${startTime} to ${endTime} ` +
+        `has been updated by an administrator.`,
+
+      bookingId:
+        booking._id.toString(),
+    });
+
+    /* =================================================
+       EMAIL NOTIFICATION
+
+       Employee email and admin emails are resolved
+       dynamically by emailService.
+    ================================================= */
+
+    void sendBookingUpdatedEmails(
+      booking._id,
+      {
+        oldRoomName:
+          oldRoom?.name ||
+          "Conference Room",
+
+        oldDate,
+
+        oldStartTime,
+
+        oldEndTime,
+      }
+    );
+
+    /* ---------------------------------------------
+       POPULATE UPDATED BOOKING
+    --------------------------------------------- */
+
+    const populatedBooking =
+      await Booking.findById(
+        booking._id
+      )
+        .populate(
+          "room",
+          "name capacity location facilities"
+        )
+        .populate(
+          "user",
+          "name email department role"
+        );
+
+    return res.status(200).json({
+      success: true,
+
+      message:
+        "Booking updated successfully",
+
+      booking:
+        populatedBooking,
+    });
+  } catch (error) {
+    console.error(
+      "Admin edit booking error:",
       error
     );
 

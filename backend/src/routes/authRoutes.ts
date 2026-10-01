@@ -1,4 +1,5 @@
 import { Router } from "express";
+import rateLimit from "express-rate-limit";
 
 import {
   register,
@@ -6,6 +7,8 @@ import {
   me,
   logout,
   changePassword,
+  forgotPassword,
+  resetPassword,
 } from "../controllers/authController.js";
 
 import {
@@ -13,6 +16,27 @@ import {
 } from "../middleware/authMiddleware.js";
 
 const router = Router();
+
+/* =====================================================
+   FORGOT PASSWORD RATE LIMITER
+===================================================== */
+
+const forgotPasswordLimiter =
+  rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+
+    max: 5,
+
+    standardHeaders: true,
+
+    legacyHeaders: false,
+
+    message: {
+      success: false,
+      message:
+        "Too many password reset requests. Please try again later.",
+    },
+  });
 
 /* =====================================================
    PUBLIC ROUTES
@@ -28,6 +52,19 @@ router.post(
 router.post(
   "/login",
   login
+);
+
+// Forgot password
+router.post(
+  "/forgot-password",
+  forgotPasswordLimiter,
+  forgotPassword
+);
+
+// Reset password
+router.post(
+  "/reset-password",
+  resetPassword
 );
 
 /* =====================================================

@@ -94,6 +94,21 @@ export interface IUser extends Document {
 
   workingHours: IWorkingHours;
 
+  /* -------------------- Password Reset -------------------- */
+
+  /**
+   * SHA-256 hash of the password reset token.
+   *
+   * We store only the hash in MongoDB,
+   * never the raw reset token.
+   */
+  passwordResetTokenHash?: string | null;
+
+  /**
+   * Time at which the password reset token expires.
+   */
+  passwordResetExpiresAt?: Date | null;
+
   /* -------------------- Timestamps -------------------- */
 
   createdAt: Date;
@@ -315,6 +330,22 @@ const userSchema =
             enabled: false,
           }),
         },
+      },
+
+      /* =================================================
+         PASSWORD RESET
+      ================================================= */
+
+      passwordResetTokenHash: {
+        type: String,
+        default: null,
+        select: false,
+      },
+
+      passwordResetExpiresAt: {
+        type: Date,
+        default: null,
+        select: false,
       },
     },
 

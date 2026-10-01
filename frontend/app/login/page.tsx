@@ -375,17 +375,14 @@ export default function LoginPage() {
                       Password
                     </label>
 
-                    <button
-                      type="button"
-                      onClick={() =>
-                        alert(
-                          "Password reset will be added later."
-                        )
-                      }
+                    {/* Forgot Password */}
+
+                    <Link
+                      href="/forgot-password"
                       className="text-xs font-semibold text-[#E83B32] hover:underline"
                     >
                       Forgot password?
-                    </button>
+                    </Link>
 
                   </div>
 
@@ -492,10 +489,10 @@ export default function LoginPage() {
 
             </div>
 
-            {/* Footer */}
+            {/* Copyright */}
 
             <p className="mt-6 text-center text-xs text-slate-400">
-              © 2026 Dangote Group. All rights reserved.
+              © Dangote Project Office. All rights reserved
             </p>
 
           </div>
