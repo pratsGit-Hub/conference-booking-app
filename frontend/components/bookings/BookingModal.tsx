@@ -1,20 +1,16 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-
 import {
   CalendarDays,
   Clock,
   Loader2,
   X,
 } from "lucide-react";
-
 import { useEffect, useState } from "react";
-
 import {
   useForm,
 } from "react-hook-form";
-
 import { z } from "zod";
 
 import BookingSuccess from "./BookingSuccess";
@@ -25,7 +21,7 @@ import BookingSuccess from "./BookingSuccess";
 
 const API_URL =
   process.env.NEXT_PUBLIC_API_URL ||
-  "http://localhost:5000";
+  "http://localhost:5001";
 
 /* =====================================================
    PROPS
@@ -133,7 +129,6 @@ export default function BookingModal({
   selectedStartTime = "10:00",
   selectedEndTime = "11:00",
 }: BookingModalProps) {
-
   /* ===================================================
      SUCCESS STATE
   =================================================== */
@@ -160,6 +155,7 @@ export default function BookingModal({
     reset,
     setValue,
     setError,
+    watch,
     formState: {
       errors,
       isSubmitting,
@@ -178,6 +174,17 @@ export default function BookingModal({
       description: "",
     },
   });
+
+  /*
+   * Watch form values so the selected slot
+   * displayed in the UI always matches the
+   * actual form values.
+   */
+  const watchedDate = watch("date");
+  const watchedStartTime =
+    watch("startTime");
+  const watchedEndTime =
+    watch("endTime");
 
   /* ===================================================
      KEEP DASHBOARD DATE + TIME SYNCHRONIZED
@@ -255,10 +262,11 @@ export default function BookingModal({
     data: BookingFormData
   ) {
     try {
-
-      /* -----------------------------------------------
-         CHECK ROOM ID
-      ----------------------------------------------- */
+      /*
+       * -----------------------------------------------
+       * CHECK ROOM ID
+       * -----------------------------------------------
+       */
 
       if (!roomId) {
         setError(
@@ -273,9 +281,11 @@ export default function BookingModal({
         return;
       }
 
-      /* -----------------------------------------------
-         CREATE REAL BOOKING
-      ----------------------------------------------- */
+      /*
+       * -----------------------------------------------
+       * CREATE REAL BOOKING
+       * -----------------------------------------------
+       */
 
       const response =
         await fetch(
@@ -312,16 +322,26 @@ export default function BookingModal({
           }
         );
 
-      /* -----------------------------------------------
-         PARSE SERVER RESPONSE
-      ----------------------------------------------- */
+      /*
+       * -----------------------------------------------
+       * PARSE SERVER RESPONSE
+       * -----------------------------------------------
+       */
 
-      const result =
-        await response.json();
+      let result: any = null;
 
-      /* -----------------------------------------------
-         SERVER ERROR
-      ----------------------------------------------- */
+      try {
+        result =
+          await response.json();
+      } catch {
+        result = null;
+      }
+
+      /*
+       * -----------------------------------------------
+       * SERVER ERROR
+       * -----------------------------------------------
+       */
 
       if (!response.ok) {
         setError(
@@ -329,7 +349,7 @@ export default function BookingModal({
           {
             type: "server",
             message:
-              result.message ||
+              result?.message ||
               "Unable to create booking.",
           }
         );
@@ -337,14 +357,31 @@ export default function BookingModal({
         return;
       }
 
-      /* -----------------------------------------------
-         SUCCESS
-      ----------------------------------------------- */
+      /*
+       * -----------------------------------------------
+       * SUCCESS
+       * -----------------------------------------------
+       */
 
-      setCompletedBooking(data);
+      /*
+       * Use the values actually submitted by
+       * the user rather than the original props.
+       */
+      setCompletedBooking({
+        title: data.title.trim(),
+        date: data.date,
+        startTime: data.startTime,
+        endTime: data.endTime,
+        description:
+          data.description?.trim() ||
+          "",
+      });
 
       setBookingCompleted(true);
 
+      /*
+       * Reset form for the next booking.
+       */
       reset({
         title: "",
         date: selectedDate,
@@ -354,9 +391,7 @@ export default function BookingModal({
           selectedEndTime,
         description: "",
       });
-
     } catch (error) {
-
       console.error(
         "Booking request failed:",
         error
@@ -393,7 +428,6 @@ export default function BookingModal({
     });
 
     setBookingCompleted(false);
-
     setCompletedBooking(null);
 
     onClose();
@@ -438,9 +472,7 @@ export default function BookingModal({
       aria-modal="true"
       aria-labelledby="booking-modal-title"
     >
-
       <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto overflow-hidden rounded-2xl border border-[#D5E2F7] bg-white shadow-2xl">
-
         {/* =================================================
             TOP ACCENT
         ================================================= */}
@@ -452,9 +484,7 @@ export default function BookingModal({
         ================================================= */}
 
         <div className="flex items-center justify-between border-b border-[#D5E2F7] px-6 py-5">
-
           <div>
-
             <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#E83B32]">
               New Booking
             </p>
@@ -465,7 +495,6 @@ export default function BookingModal({
             >
               Book Conference Room
             </h2>
-
           </div>
 
           <button
@@ -477,7 +506,6 @@ export default function BookingModal({
           >
             <X size={22} />
           </button>
-
         </div>
 
         {/* =================================================
@@ -490,7 +518,6 @@ export default function BookingModal({
           )}
           className="space-y-5 p-6"
         >
-
           {/* =================================================
               SERVER ERROR
           ================================================= */}
@@ -498,7 +525,6 @@ export default function BookingModal({
           {errors.root?.serverError
             ?.message && (
             <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3">
-
               <p className="text-sm font-medium text-red-700">
                 {
                   errors.root
@@ -506,7 +532,6 @@ export default function BookingModal({
                     .message
                 }
               </p>
-
             </div>
           )}
 
@@ -515,7 +540,6 @@ export default function BookingModal({
           ================================================= */}
 
           <div>
-
             <label className="mb-2 block text-sm font-semibold text-[#10275F]">
               Conference Room
             </label>
@@ -530,7 +554,6 @@ export default function BookingModal({
 
               {roomName}
             </div>
-
           </div>
 
           {/* =================================================
@@ -538,7 +561,6 @@ export default function BookingModal({
           ================================================= */}
 
           <div>
-
             <label
               htmlFor="meeting-title"
               className="mb-2 block text-sm font-semibold text-[#10275F]"
@@ -566,7 +588,6 @@ export default function BookingModal({
                 }
               </p>
             )}
-
           </div>
 
           {/* =================================================
@@ -574,7 +595,6 @@ export default function BookingModal({
           ================================================= */}
 
           <div>
-
             <label
               htmlFor="booking-date"
               className="mb-2 block text-sm font-semibold text-[#10275F]"
@@ -583,7 +603,6 @@ export default function BookingModal({
             </label>
 
             <div className="relative">
-
               <CalendarDays
                 size={18}
                 className="absolute left-4 top-1/2 -translate-y-1/2 text-[#1D55B8]"
@@ -599,7 +618,6 @@ export default function BookingModal({
                     : "border-[#D5E2F7] focus:border-[#1D55B8] focus:ring-[#1D55B8]/10"
                 }`}
               />
-
             </div>
 
             {errors.date && (
@@ -610,7 +628,6 @@ export default function BookingModal({
                 }
               </p>
             )}
-
           </div>
 
           {/* =================================================
@@ -618,11 +635,9 @@ export default function BookingModal({
           ================================================= */}
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-
             {/* START TIME */}
 
             <div>
-
               <label
                 htmlFor="start-time"
                 className="mb-2 block text-sm font-semibold text-[#10275F]"
@@ -631,7 +646,6 @@ export default function BookingModal({
               </label>
 
               <div className="relative">
-
                 <Clock
                   size={18}
                   className="absolute left-4 top-1/2 -translate-y-1/2 text-[#1D55B8]"
@@ -649,7 +663,6 @@ export default function BookingModal({
                       : "border-[#D5E2F7] focus:border-[#1D55B8] focus:ring-[#1D55B8]/10"
                   }`}
                 />
-
               </div>
 
               {errors.startTime && (
@@ -660,13 +673,11 @@ export default function BookingModal({
                   }
                 </p>
               )}
-
             </div>
 
             {/* END TIME */}
 
             <div>
-
               <label
                 htmlFor="end-time"
                 className="mb-2 block text-sm font-semibold text-[#10275F]"
@@ -675,7 +686,6 @@ export default function BookingModal({
               </label>
 
               <div className="relative">
-
                 <Clock
                   size={18}
                   className="absolute left-4 top-1/2 -translate-y-1/2 text-[#1D55B8]"
@@ -693,7 +703,6 @@ export default function BookingModal({
                       : "border-[#D5E2F7] focus:border-[#1D55B8] focus:ring-[#1D55B8]/10"
                   }`}
                 />
-
               </div>
 
               {errors.endTime && (
@@ -704,9 +713,7 @@ export default function BookingModal({
                   }
                 </p>
               )}
-
             </div>
-
           </div>
 
           {/* =================================================
@@ -714,7 +721,6 @@ export default function BookingModal({
           ================================================= */}
 
           <div>
-
             <label
               htmlFor="booking-description"
               className="mb-2 block text-sm font-semibold text-[#10275F]"
@@ -739,12 +745,12 @@ export default function BookingModal({
             {errors.description && (
               <p className="mt-1.5 text-xs font-medium text-red-600">
                 {
-                  errors.description
+                  errors
+                    .description
                     .message
                 }
               </p>
             )}
-
           </div>
 
           {/* =================================================
@@ -752,9 +758,7 @@ export default function BookingModal({
           ================================================= */}
 
           <div className="rounded-xl border border-[#D5E2F7] bg-[#F6F9FF] px-4 py-3">
-
             <div className="flex items-center gap-3">
-
               <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#EEF4FF]">
                 <Clock
                   size={17}
@@ -763,23 +767,21 @@ export default function BookingModal({
               </div>
 
               <div>
-
                 <p className="text-xs font-medium text-[#64748B]">
                   Selected booking slot
                 </p>
 
                 <p className="text-sm font-bold text-[#10275F]">
-                  {selectedDate}{" "}
-                  •{" "}
-                  {selectedStartTime}{" "}
-                  -{" "}
-                  {selectedEndTime}
+                  {watchedDate || selectedDate}
+                  {" • "}
+                  {watchedStartTime ||
+                    selectedStartTime}
+                  {" - "}
+                  {watchedEndTime ||
+                    selectedEndTime}
                 </p>
-
               </div>
-
             </div>
-
           </div>
 
           {/* =================================================
@@ -787,12 +789,11 @@ export default function BookingModal({
           ================================================= */}
 
           <div className="flex flex-col-reverse gap-3 border-t border-[#D5E2F7] pt-5 sm:flex-row sm:justify-end">
-
             <button
               type="button"
               onClick={handleClose}
               disabled={isSubmitting}
-              className="rounded-xl border border-[#D5E2F7] bg-white px-5 py-3 text-sm font-bold text-[#10275F] transition hover:bg-[#EEF4FF] hover:border-[#B8CCEC] disabled:cursor-not-allowed disabled:opacity-50"
+              className="rounded-xl border border-[#D5E2F7] bg-white px-5 py-3 text-sm font-bold text-[#10275F] transition hover:border-[#B8CCEC] hover:bg-[#EEF4FF] disabled:cursor-not-allowed disabled:opacity-50"
             >
               Cancel
             </button>
@@ -802,7 +803,6 @@ export default function BookingModal({
               disabled={isSubmitting}
               className="flex min-w-32 items-center justify-center gap-2 rounded-xl bg-[#102D72] px-5 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-[#0C245C] disabled:cursor-not-allowed disabled:opacity-70"
             >
-
               {isSubmitting ? (
                 <>
                   <Loader2
@@ -815,15 +815,10 @@ export default function BookingModal({
               ) : (
                 "Book Room"
               )}
-
             </button>
-
           </div>
-
         </form>
-
       </div>
-
     </div>
   );
 }

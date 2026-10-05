@@ -22,9 +22,6 @@ import {
    HELPERS
 ===================================================== */
 
-/**
- * Validate MongoDB ObjectId.
- */
 function isValidObjectId(
   value: unknown
 ): value is string {
@@ -42,9 +39,6 @@ const APP_TIMEZONE =
   process.env.APP_TIMEZONE ||
   "Asia/Kolkata";
 
-/**
- * Get current date/time in application timezone.
- */
 function getCurrentDateAndTime() {
   const formatter =
     new Intl.DateTimeFormat(
@@ -89,6 +83,67 @@ function getCurrentDateAndTime() {
     time:
       `${values.hour}:${values.minute}`,
   };
+}
+
+/* =====================================================
+   BOOKING STATUS HELPERS
+===================================================== */
+
+/**
+ * Automatically marks finished UPCOMING bookings
+ * as COMPLETED.
+ *
+ * A booking is completed when:
+ *
+ * 1. Its date is before today
+ *
+ * OR
+ *
+ * 2. Its date is today and its end time
+ *    has already passed.
+ *
+ * CANCELLED bookings are never changed.
+ *
+ * This uses APP_TIMEZONE so local development
+ * and Render use the same timezone.
+ */
+async function syncCompletedBookings(
+  filter: Record<string, unknown> = {}
+): Promise<void> {
+  const {
+    date: today,
+    time: currentTime,
+  } = getCurrentDateAndTime();
+
+  await Booking.updateMany(
+    {
+      ...filter,
+
+      status: "UPCOMING",
+
+      $or: [
+        {
+          date: {
+            $lt: today,
+          },
+        },
+
+        {
+          date: today,
+
+          endTime: {
+            $lte: currentTime,
+          },
+        },
+      ],
+    },
+
+    {
+      $set: {
+        status: "COMPLETED",
+      },
+    }
+  );
 }
 
 /* =====================================================
@@ -895,6 +950,35 @@ export async function getMyBookings(
       });
     }
 
+    /*
+     * IMPORTANT:
+     *
+     * Before returning the employee's bookings,
+     * automatically convert finished UPCOMING
+     * bookings into COMPLETED.
+     *
+     * Only this employee's bookings are updated.
+     */
+    await syncCompletedBookings({
+      user: req.user.userId,
+    });
+
+    /*
+     * IMPORTANT:
+     *
+     * Do NOT filter by:
+     *
+     * status: "UPCOMING"
+     *
+     * because the employee must continue seeing
+     * past bookings.
+     *
+     * The response contains:
+     *
+     * UPCOMING
+     * COMPLETED
+     * CANCELLED
+     */
     const bookings =
       await Booking.find({
         user:
@@ -960,6 +1044,7 @@ export async function cancelMyBooking(
     const booking =
       await Booking.findOne({
         _id: id,
+
         user:
           req.user.userId,
       });
@@ -1055,6 +1140,24 @@ export async function getAllBookings(
   res: Response
 ) {
   try {
+    /*
+     * Automatically mark every finished UPCOMING
+     * booking as COMPLETED before returning
+     * bookings to the administrator.
+     */
+    await syncCompletedBookings();
+
+    /*
+     * Return ALL bookings.
+     *
+     * This intentionally includes:
+     *
+     * UPCOMING
+     * COMPLETED
+     * CANCELLED
+     *
+     * Therefore old bookings remain visible.
+     */
     const bookings =
       await Booking.find({})
         .populate(

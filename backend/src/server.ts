@@ -29,6 +29,17 @@ import {
 
 const app = express();
 
+/*
+ * Render runs the application behind a reverse proxy.
+ *
+ * This allows Express and express-rate-limit to correctly
+ * determine the original client IP address.
+ *
+ * IMPORTANT:
+ * This must be set BEFORE the rate limiter.
+ */
+app.set("trust proxy", 1);
+
 /* =====================================================
    CONFIGURATION
 ===================================================== */
@@ -44,7 +55,9 @@ const FRONTEND_URL =
    SECURITY
 ===================================================== */
 
-app.use(helmet());
+app.use(
+  helmet()
+);
 
 /* =====================================================
    CORS
@@ -109,7 +122,7 @@ app.use(
 app.get(
   "/api/health",
   (_req, res) => {
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
 
       message:
@@ -179,7 +192,7 @@ app.use(
 app.use(
   "/api",
   (_req, res) => {
-    res.status(404).json({
+    return res.status(404).json({
       success: false,
 
       message:
@@ -204,7 +217,7 @@ app.use(
       error
     );
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
 
       message:
@@ -219,9 +232,9 @@ app.use(
 
 async function startServer() {
   try {
-    /* ---------------------------------------------
+    /* =================================================
        CONNECT TO DATABASE FIRST
-    --------------------------------------------- */
+    ================================================= */
 
     await connectDatabase();
 
@@ -229,30 +242,62 @@ async function startServer() {
       "Database connection established."
     );
 
-    /* ---------------------------------------------
-       VERIFY EMAIL / SMTP CONNECTION
+    /* =================================================
+       VERIFY RESEND EMAIL SERVICE
 
-       This checks whether the Gmail SMTP
-       credentials from .env are valid.
-    --------------------------------------------- */
+       Resend is used through its HTTPS API.
 
-    await verifyEmailConnection();
+       We are NOT using:
+       - Gmail SMTP
+       - SMTP port 25
+       - SMTP port 465
+       - SMTP port 587
 
-    /* ---------------------------------------------
+       The actual email send happens through:
+       resend.emails.send()
+    ================================================= */
+
+    try {
+      await verifyEmailConnection();
+
+      console.log(
+        "Email API verification completed."
+      );
+    } catch (emailError) {
+      /*
+       * Do not stop the backend if the email
+       * provider has a temporary problem.
+       */
+
+      console.error(
+        "Email API verification failed:",
+        emailError
+      );
+
+      console.warn(
+        "Server will continue running. Email features may be unavailable."
+      );
+    }
+
+    /* =================================================
        START BOOKING REMINDER SCHEDULER
 
-       This checks every minute for bookings
-       starting approximately one hour later.
-    --------------------------------------------- */
+       Checks every minute for bookings that
+       start approximately one hour later.
+    ================================================= */
 
     startReminderScheduler();
 
-    /* ---------------------------------------------
+    console.log(
+      "Booking reminder scheduler started."
+    );
+
+    /* =================================================
        START EXPRESS SERVER
 
-       0.0.0.0 allows Render and other external
-       clients to reach the application.
-    --------------------------------------------- */
+       0.0.0.0 allows Render and external clients
+       to access the application.
+    ================================================= */
 
     const server =
       app.listen(
@@ -260,7 +305,7 @@ async function startServer() {
         "0.0.0.0",
         () => {
           console.log(
-            `Server running on http://localhost:${PORT}`
+            `Server running on port ${PORT}`
           );
 
           console.log(

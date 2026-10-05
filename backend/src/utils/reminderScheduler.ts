@@ -13,7 +13,7 @@ const APP_TIMEZONE =
    START REMINDER SCHEDULER
 ===================================================== */
 
-export function startReminderScheduler() {
+export function startReminderScheduler(): void {
   console.log(
     `Booking reminder scheduler started (${APP_TIMEZONE}).`
   );
@@ -22,26 +22,24 @@ export function startReminderScheduler() {
     "* * * * *",
     async () => {
       try {
-        /* ---------------------------------------------
+        /* =================================================
            CURRENT TIME
-        --------------------------------------------- */
+        ================================================= */
 
-        const now =
-          new Date();
+        const now = new Date();
 
-        /* ---------------------------------------------
-           CALCULATE TIME 1 HOUR FROM NOW
-        --------------------------------------------- */
+        /* =================================================
+           TARGET TIME = 1 HOUR FROM NOW
+        ================================================= */
 
-        const target =
-          new Date(
-            now.getTime() +
-              60 * 60 * 1000
-          );
+        const target = new Date(
+          now.getTime() +
+            60 * 60 * 1000
+        );
 
-        /* ---------------------------------------------
-           CONVERT TARGET TO APP TIMEZONE
-        --------------------------------------------- */
+        /* =================================================
+           CONVERT TARGET TO APPLICATION TIMEZONE
+        ================================================= */
 
         const formatter =
           new Intl.DateTimeFormat(
@@ -51,10 +49,13 @@ export function startReminderScheduler() {
                 APP_TIMEZONE,
 
               year: "numeric",
+
               month: "2-digit",
+
               day: "2-digit",
 
               hour: "2-digit",
+
               minute: "2-digit",
 
               hourCycle: "h23",
@@ -66,12 +67,12 @@ export function startReminderScheduler() {
             target
           );
 
-        const values:
-          Record<string, string> = {};
+        const values: Record<
+          string,
+          string
+        > = {};
 
-        for (
-          const part of parts
-        ) {
+        for (const part of parts) {
           if (
             part.type !==
             "literal"
@@ -87,28 +88,28 @@ export function startReminderScheduler() {
         const targetTime =
           `${values.hour}:${values.minute}`;
 
-        /* ---------------------------------------------
-           FIND BOOKINGS STARTING IN ONE HOUR
-        --------------------------------------------- */
+        /* =================================================
+           FIND BOOKINGS STARTING IN APPROXIMATELY 1 HOUR
+        ================================================= */
 
         const bookings =
           await Booking.find({
-            status:
-              "UPCOMING",
+            status: "UPCOMING",
 
-            date:
-              targetDate,
+            date: targetDate,
 
-            startTime:
-              targetTime,
+            startTime: targetTime,
 
-            reminderSentAt:
-              null,
+            reminderSentAt: null,
           })
             .select(
               "_id user title date startTime endTime status reminderSentAt"
             )
             .lean();
+
+        /* =================================================
+           NO BOOKINGS
+        ================================================= */
 
         if (
           bookings.length ===
@@ -118,100 +119,146 @@ export function startReminderScheduler() {
         }
 
         console.log(
-          `Found ${bookings.length} booking(s) requiring a reminder for ${targetDate} ${targetTime}.`
+          `[Reminder Scheduler] Found ${bookings.length} booking(s) for ${targetDate} ${targetTime}.`
         );
 
-        /* ---------------------------------------------
-           PROCESS EACH BOOKING
-        --------------------------------------------- */
+        /* =================================================
+           PROCESS BOOKINGS
+        ================================================= */
 
         for (
           const booking of bookings
         ) {
-          /* -----------------------------------------
-             ATOMIC CLAIM
+          try {
+            /* =================================================
+               ATOMIC CLAIM
 
-             Prevent duplicate reminders if multiple
-             scheduler executions/processes occur.
-          ----------------------------------------- */
+               Mark the reminder as claimed before sending.
 
-          const claimed =
-            await Booking.findOneAndUpdate(
+               This prevents duplicate reminders when:
+               - Multiple scheduler executions happen
+               - Multiple backend instances run
+               - A request overlaps another scheduler run
+            ================================================= */
+
+            const claimed =
+              await Booking.findOneAndUpdate(
+                {
+                  _id:
+                    booking._id,
+
+                  status:
+                    "UPCOMING",
+
+                  reminderSentAt:
+                    null,
+                },
+
+                {
+                  $set: {
+                    reminderSentAt:
+                      new Date(),
+                  },
+                },
+
+                {
+                  new: true,
+                }
+              );
+
+            /* =================================================
+               SOMEONE ELSE ALREADY CLAIMED IT
+            ================================================= */
+
+            if (!claimed) {
+              console.log(
+                `[Reminder Scheduler] Booking ${booking._id} was already claimed.`
+              );
+
+              continue;
+            }
+
+            console.log(
+              `[Reminder Scheduler] Processing booking ${booking._id}...`
+            );
+
+            /* =================================================
+               SEND EMAIL REMINDER
+            ================================================= */
+
+            await sendBookingReminderEmail(
+              booking._id
+            );
+
+            console.log(
+              `[Reminder Scheduler] Email reminder sent for booking ${booking._id}.`
+            );
+
+            /* =================================================
+               CREATE IN-APP NOTIFICATION
+            ================================================= */
+
+            if (
+              booking.user
+            ) {
+              try {
+                await createNotificationIfEnabled(
+                  {
+                    userId:
+                      booking.user.toString(),
+
+                    type:
+                      "BOOKING_REMINDER",
+
+                    title:
+                      "Upcoming Meeting",
+
+                    message:
+                      `Your meeting "${booking.title}" starts in approximately one hour.`,
+
+                    bookingId:
+                      booking._id.toString(),
+                  }
+                );
+
+                console.log(
+                  `[Reminder Scheduler] In-app notification created for booking ${booking._id}.`
+                );
+              } catch (
+                notificationError
+              ) {
+                /*
+                 * Email was already sent successfully.
+                 *
+                 * Do NOT reset reminderSentAt here,
+                 * otherwise the email could be sent again.
+                 */
+
+                console.error(
+                  `[Reminder Scheduler] In-app notification failed for booking ${booking._id}:`,
+                  notificationError
+                );
+              }
+            }
+
+            console.log(
+              `[Reminder Scheduler] Reminder completed successfully for booking ${booking._id}.`
+            );
+          } catch (error) {
+            /* =================================================
+               EMAIL FAILED
+
+               Reset reminderSentAt so the next scheduler run
+               can retry the reminder.
+            ================================================= */
+
+            await Booking.updateOne(
               {
                 _id:
                   booking._id,
 
                 status:
                   "UPCOMING",
-
-                reminderSentAt:
-                  null,
-              },
-
-              {
-                $set: {
-                  reminderSentAt:
-                    new Date(),
-                },
-              },
-
-              {
-                new: true,
-              }
-            );
-
-          if (!claimed) {
-            continue;
-          }
-
-          try {
-            /* ---------------------------------------
-               SEND REMINDER EMAIL
-            --------------------------------------- */
-
-            await sendBookingReminderEmail(
-              booking._id
-            );
-
-            /* ---------------------------------------
-               CREATE IN-APP NOTIFICATION
-            --------------------------------------- */
-
-            if (
-              booking.user
-            ) {
-              await createNotificationIfEnabled(
-                {
-                  userId:
-                    booking.user.toString(),
-
-                  type:
-                    "BOOKING_REMINDER",
-
-                  title:
-                    "Upcoming Meeting",
-
-                  message:
-                    `Your meeting "${booking.title}" starts in approximately one hour.`,
-
-                  bookingId:
-                    booking._id.toString(),
-                }
-              );
-            }
-
-            console.log(
-              `Reminder processed successfully for booking ${booking._id}`
-            );
-          } catch (error) {
-            /* ---------------------------------------
-               RESET CLAIM SO THE SYSTEM CAN RETRY
-            --------------------------------------- */
-
-            await Booking.updateOne(
-              {
-                _id:
-                  booking._id,
               },
 
               {
@@ -223,14 +270,18 @@ export function startReminderScheduler() {
             );
 
             console.error(
-              `Failed to process reminder for booking ${booking._id}:`,
+              `[Reminder Scheduler] Failed to send/process reminder for booking ${booking._id}:`,
               error
+            );
+
+            console.log(
+              `[Reminder Scheduler] Reminder claim reset. The system will retry on the next matching scheduler run.`
             );
           }
         }
       } catch (error) {
         console.error(
-          "Reminder scheduler error:",
+          "[Reminder Scheduler] Scheduler error:",
           error
         );
       }

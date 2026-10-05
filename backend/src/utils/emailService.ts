@@ -1,5 +1,5 @@
 import "dotenv/config";
-import nodemailer from "nodemailer";
+import { Resend } from "resend";
 
 import { Booking } from "../models/Booking.js";
 import { User } from "../models/User.js";
@@ -8,43 +8,20 @@ import { User } from "../models/User.js";
    EMAIL CONFIGURATION
 ===================================================== */
 
-const SMTP_HOST =
-  process.env.SMTP_HOST || "";
-
-const SMTP_PORT =
-  Number(process.env.SMTP_PORT) || 587;
-
-const SMTP_SECURE =
-  process.env.SMTP_SECURE === "true";
-
-const SMTP_USER =
-  process.env.SMTP_USER || "";
-
-const SMTP_PASS =
-  process.env.SMTP_PASS || "";
+const RESEND_API_KEY =
+  process.env.RESEND_API_KEY || "";
 
 const EMAIL_FROM =
   process.env.EMAIL_FROM ||
-  SMTP_USER;
+  "Conference Room Booking <onboarding@resend.dev>";
 
 /* =====================================================
-   TRANSPORTER
+   RESEND CLIENT
 ===================================================== */
 
-const transporter =
-  SMTP_HOST &&
-  SMTP_USER &&
-  SMTP_PASS
-    ? nodemailer.createTransport({
-        host: SMTP_HOST,
-        port: SMTP_PORT,
-        secure: SMTP_SECURE,
-
-        auth: {
-          user: SMTP_USER,
-          pass: SMTP_PASS,
-        },
-      })
+const resend =
+  RESEND_API_KEY
+    ? new Resend(RESEND_API_KEY)
     : null;
 
 /* =====================================================
@@ -76,7 +53,9 @@ interface PopulatedBooking {
 
         notifications?: {
           bookingConfirmation?: boolean;
+
           bookingCancellation?: boolean;
+
           bookingReminder?: boolean;
         };
       }
@@ -98,34 +77,50 @@ interface PopulatedBooking {
 ===================================================== */
 
 export function isEmailConfigured(): boolean {
-  return Boolean(transporter);
+  return Boolean(
+    resend &&
+      RESEND_API_KEY &&
+      EMAIL_FROM
+  );
 }
 
 /* =====================================================
-   VERIFY SMTP CONNECTION
+   VERIFY EMAIL API CONNECTION
 ===================================================== */
 
+/*
+ * IMPORTANT:
+ *
+ * We do NOT call:
+ *
+ *   resend.domains.list()
+ *
+ * here.
+ *
+ * Your Resend API key is restricted to sending emails.
+ * Therefore, it cannot access the Domains API.
+ *
+ * We only verify that the required email configuration
+ * exists. The actual Resend API connection is verified
+ * when an email is sent through resend.emails.send().
+ */
+
 export async function verifyEmailConnection(): Promise<void> {
-  if (!transporter) {
+  if (!isEmailConfigured()) {
     console.warn(
-      "Email service is not configured. SMTP credentials are missing."
+      "Email service is not configured. RESEND_API_KEY or EMAIL_FROM is missing."
     );
 
     return;
   }
 
-  try {
-    await transporter.verify();
+  console.log(
+    "Resend email service configured successfully."
+  );
 
-    console.log(
-      `SMTP connection verified successfully for ${SMTP_USER}`
-    );
-  } catch (error) {
-    console.error(
-      "SMTP connection verification failed:",
-      error
-    );
-  }
+  console.log(
+    `Email sender: ${EMAIL_FROM}`
+  );
 }
 
 /* =====================================================
@@ -190,7 +185,7 @@ async function sendEmail({
   html: string;
   text: string;
 }): Promise<void> {
-  if (!transporter) {
+  if (!isEmailConfigured()) {
     console.warn(
       "Email is not configured. Skipping email:",
       subject
@@ -199,13 +194,49 @@ async function sendEmail({
     return;
   }
 
-  await transporter.sendMail({
-    from: EMAIL_FROM,
-    to,
-    subject,
-    text,
-    html,
-  });
+  try {
+    console.log(
+      `Sending email via Resend to ${to}...`
+    );
+
+    const { data, error } =
+      await resend!.emails.send({
+        from: EMAIL_FROM,
+
+        to: [to],
+
+        subject,
+
+        text,
+
+        html,
+      });
+
+    if (error) {
+      console.error(
+        "Resend API returned an error:",
+        error
+      );
+
+      throw new Error(
+        error.message ||
+          "Resend email API returned an error."
+      );
+    }
+
+    console.log(
+      `Email sent successfully via Resend. ID: ${
+        data?.id || "unknown"
+      }`
+    );
+  } catch (error) {
+    console.error(
+      `Failed to send email to ${to}:`,
+      error
+    );
+
+    throw error;
+  }
 }
 
 /* =====================================================
@@ -222,7 +253,7 @@ export async function sendPasswordResetEmail({
   resetUrl: string;
 }): Promise<void> {
   try {
-    if (!transporter) {
+    if (!isEmailConfigured()) {
       console.warn(
         "Email is not configured. Skipping password reset email."
       );
@@ -231,7 +262,9 @@ export async function sendPasswordResetEmail({
     }
 
     const safeName =
-      escapeHtml(name || "Employee");
+      escapeHtml(
+        name || "Employee"
+      );
 
     const safeResetUrl =
       escapeHtml(resetUrl);
@@ -258,8 +291,6 @@ export async function sendPasswordResetEmail({
           "
         >
 
-          <!-- HEADER -->
-
           <div
             style="
               background:#10275F;
@@ -276,8 +307,6 @@ export async function sendPasswordResetEmail({
               Password Reset
             </h1>
           </div>
-
-          <!-- CONTENT -->
 
           <div style="padding:30px;">
 
@@ -311,8 +340,6 @@ export async function sendPasswordResetEmail({
               Click the button below to create a new password.
             </p>
 
-            <!-- RESET BUTTON -->
-
             <div
               style="
                 text-align:center;
@@ -336,8 +363,6 @@ export async function sendPasswordResetEmail({
               </a>
             </div>
 
-            <!-- EXPIRY -->
-
             <p
               style="
                 font-size:14px;
@@ -348,8 +373,6 @@ export async function sendPasswordResetEmail({
               This password reset link will expire in
               <strong>15 minutes</strong>.
             </p>
-
-            <!-- SECURITY MESSAGE -->
 
             <p
               style="
@@ -387,10 +410,6 @@ export async function sendPasswordResetEmail({
       </div>
     `;
 
-    /* =================================================
-       PLAIN TEXT EMAIL
-    ================================================= */
-
     const text = `
 Hello ${name || "Employee"},
 
@@ -422,6 +441,8 @@ Conference Room Booking System
       "Password reset email error:",
       error
     );
+
+    throw error;
   }
 }
 
@@ -485,73 +506,184 @@ function createBookingDetailsHtml(
     );
 
   return `
-    <div style="font-family: Arial, sans-serif; background:#f5f7f9; padding:32px;">
-      <div style="max-width:650px; margin:auto; background:white; border-radius:12px; overflow:hidden;">
+    <div
+      style="
+        font-family:Arial,sans-serif;
+        background:#f5f7f9;
+        padding:32px;
+      "
+    >
 
-        <div style="background:#10275F; padding:24px;">
-          <h1 style="margin:0; color:white; font-size:24px;">
+      <div
+        style="
+          max-width:650px;
+          margin:auto;
+          background:white;
+          border-radius:12px;
+          overflow:hidden;
+          border:1px solid #e5e7eb;
+        "
+      >
+
+        <div
+          style="
+            background:#10275F;
+            padding:24px;
+          "
+        >
+          <h1
+            style="
+              margin:0;
+              color:white;
+              font-size:24px;
+            "
+          >
             Conference Room Booking
           </h1>
         </div>
 
         <div style="padding:30px;">
 
-          <p style="font-size:16px; color:#333;">
+          <p
+            style="
+              font-size:16px;
+              color:#333;
+            "
+          >
             Hello ${userName},
           </p>
 
-          <p style="font-size:15px; color:#555;">
+          <p
+            style="
+              font-size:15px;
+              color:#555;
+            "
+          >
             Here are the details of your conference room booking.
           </p>
 
-          <div style="margin-top:24px; border:1px solid #e5e7eb; border-radius:10px; overflow:hidden;">
+          <div
+            style="
+              margin-top:24px;
+              border:1px solid #e5e7eb;
+              border-radius:10px;
+              overflow:hidden;
+            "
+          >
 
-            <div style="padding:16px; border-bottom:1px solid #e5e7eb;">
+            <div
+              style="
+                padding:16px;
+                border-bottom:1px solid #e5e7eb;
+              "
+            >
               <strong>Meeting</strong>
-              <div style="margin-top:5px; color:#555;">
+
+              <div
+                style="
+                  margin-top:5px;
+                  color:#555;
+                "
+              >
                 ${title}
               </div>
             </div>
 
-            <div style="padding:16px; border-bottom:1px solid #e5e7eb;">
+            <div
+              style="
+                padding:16px;
+                border-bottom:1px solid #e5e7eb;
+              "
+            >
               <strong>Room</strong>
-              <div style="margin-top:5px; color:#555;">
+
+              <div
+                style="
+                  margin-top:5px;
+                  color:#555;
+                "
+              >
                 ${roomName}
               </div>
             </div>
 
-            <div style="padding:16px; border-bottom:1px solid #e5e7eb;">
+            <div
+              style="
+                padding:16px;
+                border-bottom:1px solid #e5e7eb;
+              "
+            >
               <strong>Location</strong>
-              <div style="margin-top:5px; color:#555;">
+
+              <div
+                style="
+                  margin-top:5px;
+                  color:#555;
+                "
+              >
                 ${location}
               </div>
             </div>
 
-            <div style="padding:16px; border-bottom:1px solid #e5e7eb;">
+            <div
+              style="
+                padding:16px;
+                border-bottom:1px solid #e5e7eb;
+              "
+            >
               <strong>Date</strong>
-              <div style="margin-top:5px; color:#555;">
+
+              <div
+                style="
+                  margin-top:5px;
+                  color:#555;
+                "
+              >
                 ${date}
               </div>
             </div>
 
             <div style="padding:16px;">
+
               <strong>Time</strong>
-              <div style="margin-top:5px; color:#555;">
-                ${booking.startTime} - ${booking.endTime}
+
+              <div
+                style="
+                  margin-top:5px;
+                  color:#555;
+                "
+              >
+                ${booking.startTime}
+                -
+                ${booking.endTime}
               </div>
+
             </div>
 
           </div>
 
         </div>
 
-        <div style="background:#f8fafc; padding:18px 30px;">
-          <p style="margin:0; font-size:12px; color:#888;">
-            This is an automated email from the Conference Room Booking System.
+        <div
+          style="
+            background:#f8fafc;
+            padding:18px 30px;
+          "
+        >
+          <p
+            style="
+              margin:0;
+              font-size:12px;
+              color:#888;
+            "
+          >
+            This is an automated email from the
+            Conference Room Booking System.
           </p>
         </div>
 
       </div>
+
     </div>
   `;
 }
@@ -565,7 +697,11 @@ sendBookingCreatedEmails(
   bookingId: unknown
 ): Promise<void> {
   try {
-    if (!transporter) {
+    if (!isEmailConfigured()) {
+      console.warn(
+        "Email service is not configured."
+      );
+
       return;
     }
 
@@ -627,6 +763,7 @@ Date: ${date}
 Time: ${booking.startTime} - ${booking.endTime}
 
 Thank you.
+
 Conference Room Booking System
 `;
 
@@ -661,6 +798,7 @@ Conference Room Booking System
     const admins =
       await User.find({
         role: "ADMIN",
+
         email: {
           $exists: true,
           $ne: "",
@@ -683,12 +821,17 @@ Conference Room Booking System
 
     await Promise.all(
       adminEmails.map(
-        async (adminEmail) => {
+        async (
+          adminEmail
+        ) => {
           await sendEmail({
             to: adminEmail,
+
             subject:
               `New Room Booking - ${roomName}`,
+
             html,
+
             text,
           });
 
@@ -698,6 +841,7 @@ Conference Room Booking System
         }
       )
     );
+
   } catch (error) {
     console.error(
       "Booking created email error:",
@@ -713,21 +857,21 @@ Conference Room Booking System
 export async function
 sendBookingUpdatedEmails(
   bookingId: unknown,
+
   previousBooking: {
     oldRoomName: string;
+
     oldDate: string;
+
     oldStartTime: string;
+
     oldEndTime: string;
   }
 ): Promise<void> {
   try {
-    if (!transporter) {
+    if (!isEmailConfigured()) {
       return;
     }
-
-    /* ---------------------------------------------
-       GET UPDATED BOOKING
-    --------------------------------------------- */
 
     const booking =
       await getBooking(
@@ -770,10 +914,6 @@ sendBookingUpdatedEmails(
     const subject =
       `Booking Updated - ${roomName} - ${booking.date}`;
 
-    /* ---------------------------------------------
-       UPDATED BOOKING DETAILS
-    --------------------------------------------- */
-
     const html = `
       <div
         style="
@@ -794,8 +934,6 @@ sendBookingUpdatedEmails(
           "
         >
 
-          <!-- HEADER -->
-
           <div
             style="
               background:#10275F;
@@ -812,8 +950,6 @@ sendBookingUpdatedEmails(
               Booking Updated
             </h1>
           </div>
-
-          <!-- CONTENT -->
 
           <div
             style="
@@ -842,8 +978,6 @@ sendBookingUpdatedEmails(
               Your conference room booking has been
               updated by an administrator.
             </p>
-
-            <!-- NEW BOOKING -->
 
             <div
               style="
@@ -922,7 +1056,7 @@ sendBookingUpdatedEmails(
                 >
                   ${escapeHtml(
                     booking.room?.location ||
-                      ""
+                    ""
                   )}
                 </div>
               </div>
@@ -945,11 +1079,8 @@ sendBookingUpdatedEmails(
                 </div>
               </div>
 
-              <div
-                style="
-                  padding:16px;
-                "
-              >
+              <div style="padding:16px;">
+
                 <strong>Time</strong>
 
                 <div
@@ -962,11 +1093,10 @@ sendBookingUpdatedEmails(
                   -
                   ${booking.endTime}
                 </div>
+
               </div>
 
             </div>
-
-            <!-- PREVIOUS DETAILS -->
 
             <div
               style="
@@ -994,6 +1124,7 @@ sendBookingUpdatedEmails(
                   color:#555;
                 "
               >
+
                 <div>
                   <strong>Room:</strong>
                   ${escapeHtml(
@@ -1016,6 +1147,7 @@ sendBookingUpdatedEmails(
                     previousBooking.oldEndTime
                   )}
                 </div>
+
               </div>
 
             </div>
@@ -1033,8 +1165,6 @@ sendBookingUpdatedEmails(
             </p>
 
           </div>
-
-          <!-- FOOTER -->
 
           <div
             style="
@@ -1058,10 +1188,6 @@ sendBookingUpdatedEmails(
 
       </div>
     `;
-
-    /* ---------------------------------------------
-       PLAIN TEXT EMAIL
-    --------------------------------------------- */
 
     const text = `
 Hello ${user.name},
@@ -1118,6 +1244,7 @@ Conference Room Booking System
     const admins =
       await User.find({
         role: "ADMIN",
+
         email: {
           $exists: true,
           $ne: "",
@@ -1137,12 +1264,17 @@ Conference Room Booking System
             )
         )
         .map(
-          async (admin) => {
+          async (
+            admin
+          ) => {
             await sendEmail({
               to: admin.email,
+
               subject:
                 `Booking Updated by Administrator - ${roomName}`,
+
               html,
+
               text,
             });
 
@@ -1152,6 +1284,7 @@ Conference Room Booking System
           }
         )
     );
+
   } catch (error) {
     console.error(
       "Booking update email error:",
@@ -1167,10 +1300,11 @@ Conference Room Booking System
 export async function
 sendBookingCancelledEmails(
   bookingId: unknown,
+
   cancelledBy?: string
 ): Promise<void> {
   try {
-    if (!transporter) {
+    if (!isEmailConfigured()) {
       return;
     }
 
@@ -1218,20 +1352,40 @@ sendBookingCancelledEmails(
         booking
       )}
 
-      <div style="max-width:650px; margin:16px auto 0; padding:20px; background:#fff1f2; border:1px solid #fecdd3; border-radius:10px;">
-        <strong style="color:#be123c;">
+      <div
+        style="
+          max-width:650px;
+          margin:16px auto 0;
+          padding:20px;
+          background:#fff1f2;
+          border:1px solid #fecdd3;
+          border-radius:10px;
+        "
+      >
+
+        <strong
+          style="
+            color:#be123c;
+          "
+        >
           This booking has been cancelled.
         </strong>
 
         ${
           cancelledByText
             ? `
-              <p style="margin:8px 0 0; color:#555;">
+              <p
+                style="
+                  margin:8px 0 0;
+                  color:#555;
+                "
+              >
                 ${cancelledByText}
               </p>
             `
             : ""
         }
+
       </div>
     `;
 
@@ -1245,7 +1399,11 @@ Room: ${roomName}
 Date: ${date}
 Time: ${booking.startTime} - ${booking.endTime}
 
-${cancelledBy ? `Cancelled by: ${cancelledBy}` : ""}
+${
+  cancelledBy
+    ? `Cancelled by: ${cancelledBy}`
+    : ""
+}
 
 Conference Room Booking System
 `;
@@ -1281,6 +1439,7 @@ Conference Room Booking System
     const admins =
       await User.find({
         role: "ADMIN",
+
         email: {
           $exists: true,
           $ne: "",
@@ -1300,11 +1459,16 @@ Conference Room Booking System
             )
         )
         .map(
-          async (admin) => {
+          async (
+            admin
+          ) => {
             await sendEmail({
               to: admin.email,
+
               subject,
+
               html,
+
               text,
             });
 
@@ -1314,6 +1478,7 @@ Conference Room Booking System
           }
         )
     );
+
   } catch (error) {
     console.error(
       "Booking cancellation email error:",
@@ -1331,7 +1496,7 @@ sendBookingReminderEmail(
   bookingId: unknown
 ): Promise<void> {
   try {
-    if (!transporter) {
+    if (!isEmailConfigured()) {
       return;
     }
 
@@ -1341,26 +1506,42 @@ sendBookingReminderEmail(
       );
 
     if (!booking) {
+      console.error(
+        "Reminder email: booking not found"
+      );
+
       return;
     }
+
+    /* =================================================
+       DO NOT SEND FOR CANCELLED BOOKINGS
+    ================================================= */
 
     if (
       booking.status ===
       "CANCELLED"
     ) {
+      console.log(
+        `Skipping reminder for cancelled booking ${bookingId}`
+      );
+
       return;
     }
 
     if (!booking.user) {
+      console.error(
+        "Reminder email: user not found"
+      );
+
       return;
     }
 
     const user =
       booking.user;
 
-    /* ---------------------------------------------
+    /* =================================================
        USER REMINDER PREFERENCE
-    --------------------------------------------- */
+    ================================================= */
 
     if (
       user.notifications
@@ -1386,35 +1567,91 @@ sendBookingReminderEmail(
       `Meeting Reminder - ${roomName} - ${booking.startTime}`;
 
     const html = `
-      <div style="font-family:Arial,sans-serif;background:#f5f7f9;padding:32px;">
-        <div style="max-width:650px;margin:auto;background:white;border-radius:12px;overflow:hidden;">
+      <div
+        style="
+          font-family:Arial,sans-serif;
+          background:#f5f7f9;
+          padding:32px;
+        "
+      >
 
-          <div style="background:#10275F;padding:24px;">
-            <h1 style="margin:0;color:white;font-size:24px;">
+        <div
+          style="
+            max-width:650px;
+            margin:auto;
+            background:white;
+            border-radius:12px;
+            overflow:hidden;
+            border:1px solid #e5e7eb;
+          "
+        >
+
+          <div
+            style="
+              background:#10275F;
+              padding:24px;
+            "
+          >
+            <h1
+              style="
+                margin:0;
+                color:white;
+                font-size:24px;
+              "
+            >
               Meeting Reminder
             </h1>
           </div>
 
-          <div style="padding:30px;">
+          <div
+            style="
+              padding:30px;
+            "
+          >
 
-            <p style="font-size:16px;color:#333;">
-              Hello ${escapeHtml(user.name)},
+            <p
+              style="
+                font-size:16px;
+                color:#333;
+              "
+            >
+              Hello ${escapeHtml(
+                user.name
+              )},
             </p>
 
-            <p style="font-size:15px;color:#555;">
-              This is a reminder that your conference room booking starts in approximately one hour.
+            <p
+              style="
+                font-size:15px;
+                color:#555;
+                line-height:1.6;
+              "
+            >
+              This is a reminder that your conference
+              room booking starts in approximately one hour.
             </p>
 
-            <div style="margin-top:24px;padding:20px;background:#f8fafc;border-radius:10px;">
+            <div
+              style="
+                margin-top:24px;
+                padding:20px;
+                background:#f8fafc;
+                border-radius:10px;
+              "
+            >
 
               <p>
                 <strong>Meeting:</strong>
-                ${escapeHtml(booking.title)}
+                ${escapeHtml(
+                  booking.title
+                )}
               </p>
 
               <p>
                 <strong>Room:</strong>
-                ${escapeHtml(roomName)}
+                ${escapeHtml(
+                  roomName
+                )}
               </p>
 
               <p>
@@ -1424,24 +1661,44 @@ sendBookingReminderEmail(
 
               <p>
                 <strong>Time:</strong>
-                ${booking.startTime} - ${booking.endTime}
+                ${booking.startTime}
+                -
+                ${booking.endTime}
               </p>
 
             </div>
 
-            <p style="margin-top:24px;color:#555;">
+            <p
+              style="
+                margin-top:24px;
+                color:#555;
+              "
+            >
               Please make sure you arrive on time.
             </p>
 
           </div>
 
-          <div style="background:#f8fafc;padding:18px 30px;">
-            <p style="margin:0;font-size:12px;color:#888;">
-              This is an automated email from the Conference Room Booking System.
+          <div
+            style="
+              background:#f8fafc;
+              padding:18px 30px;
+            "
+          >
+            <p
+              style="
+                margin:0;
+                font-size:12px;
+                color:#888;
+              "
+            >
+              This is an automated email from the
+              Conference Room Booking System.
             </p>
           </div>
 
         </div>
+
       </div>
     `;
 
@@ -1462,14 +1719,18 @@ Conference Room Booking System
 
     await sendEmail({
       to: user.email,
+
       subject,
+
       html,
+
       text,
     });
 
     console.log(
       `Reminder email sent to ${user.email}`
     );
+
   } catch (error) {
     console.error(
       "Booking reminder email error:",

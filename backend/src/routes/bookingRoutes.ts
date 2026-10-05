@@ -11,7 +11,6 @@ import {
 } from "../controllers/bookingController.js";
 
 import { requireAuth } from "../middleware/authMiddleware.js";
-
 import { requireRole } from "../middleware/roleMiddleware.js";
 
 const router = Router();
@@ -20,9 +19,7 @@ const router = Router();
    ROOM AVAILABILITY
 
    IMPORTANT:
-
-   Keep this BEFORE "/:id" routes.
-
+   Keep this before "/:id" routes.
 ===================================================== */
 
 router.get(
@@ -33,6 +30,8 @@ router.get(
 
 /* =====================================================
    CREATE BOOKING
+
+   POST /api/bookings
 ===================================================== */
 
 router.post(
@@ -43,6 +42,13 @@ router.post(
 
 /* =====================================================
    MY BOOKINGS
+
+   GET /api/bookings/my
+
+   Returns:
+   - UPCOMING
+   - COMPLETED
+   - CANCELLED
 ===================================================== */
 
 router.get(
@@ -52,17 +58,12 @@ router.get(
 );
 
 /* =====================================================
-   CANCEL MY BOOKING
-===================================================== */
-
-router.patch(
-  "/:id/cancel",
-  requireAuth,
-  cancelMyBooking
-);
-
-/* =====================================================
    ADMIN - GET ALL BOOKINGS
+
+   GET /api/bookings
+
+   IMPORTANT:
+   This must remain before "/:id" routes.
 ===================================================== */
 
 router.get(
@@ -74,6 +75,8 @@ router.get(
 
 /* =====================================================
    ADMIN - EDIT BOOKING
+
+   PATCH /api/bookings/:id/edit
 ===================================================== */
 
 router.patch(
@@ -85,6 +88,8 @@ router.patch(
 
 /* =====================================================
    ADMIN - CANCEL BOOKING
+
+   PATCH /api/bookings/:id/admin-cancel
 ===================================================== */
 
 router.patch(
@@ -92,6 +97,18 @@ router.patch(
   requireAuth,
   requireRole("ADMIN"),
   adminCancelBooking
+);
+
+/* =====================================================
+   EMPLOYEE - CANCEL OWN BOOKING
+
+   PATCH /api/bookings/:id/cancel
+===================================================== */
+
+router.patch(
+  "/:id/cancel",
+  requireAuth,
+  cancelMyBooking
 );
 
 export default router;

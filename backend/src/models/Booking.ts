@@ -8,8 +8,7 @@ export type BookingStatus =
   | "COMPLETED"
   | "CANCELLED";
 
-export interface IBooking
-  extends Document {
+export interface IBooking extends Document {
   user: mongoose.Types.ObjectId;
   room: mongoose.Types.ObjectId;
 
@@ -36,106 +35,179 @@ export interface IBooking
    */
   occupiedSlots: string[];
 
+  /*
+   * Database status.
+   *
+   * UPCOMING  -> Booking has not finished.
+   * COMPLETED -> Booking has finished.
+   * CANCELLED -> Booking was cancelled.
+   *
+   * IMPORTANT:
+   * The frontend/backend should determine whether an
+   * UPCOMING booking is actually completed by comparing
+   * date + endTime with the current time.
+   */
   status: BookingStatus;
 
   createdAt: Date;
   updatedAt: Date;
 }
 
-const bookingSchema =
-  new Schema<IBooking>(
-    {
-      user: {
-        type: Schema.Types.ObjectId,
-        ref: "User",
-        required: true,
-        index: true,
-      },
+const bookingSchema = new Schema<IBooking>(
+  {
+    user: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+      index: true,
+    },
 
-      room: {
-        type: Schema.Types.ObjectId,
-        ref: "Room",
-        required: true,
-        index: true,
-      },
+    room: {
+      type: Schema.Types.ObjectId,
+      ref: "Room",
+      required: true,
+      index: true,
+    },
 
-      title: {
-        type: String,
-        required: true,
-        trim: true,
-        minlength: 2,
-        maxlength: 200,
-      },
+    title: {
+      type: String,
+      required: true,
+      trim: true,
+      minlength: 2,
+      maxlength: 200,
+    },
 
-      date: {
-        type: String,
-        required: true,
-        match: /^\d{4}-\d{2}-\d{2}$/,
-        index: true,
-      },
+    /*
+     * Booking date.
+     *
+     * Format:
+     * YYYY-MM-DD
+     *
+     * Example:
+     * 2026-10-05
+     */
+    date: {
+      type: String,
+      required: true,
+      match: /^\d{4}-\d{2}-\d{2}$/,
+      index: true,
+    },
 
-      startTime: {
-        type: String,
-        required: true,
-        match:
-          /^([01]\d|2[0-3]):([0-5]\d)$/,
-      },
+    /*
+     * Booking start time.
+     *
+     * Format:
+     * HH:mm
+     *
+     * Example:
+     * 10:00
+     */
+    startTime: {
+      type: String,
+      required: true,
+      match: /^([01]\d|2[0-3]):([0-5]\d)$/,
+    },
 
-      endTime: {
-        type: String,
-        required: true,
-        match:
-          /^([01]\d|2[0-3]):([0-5]\d)$/,
-      },
+    /*
+     * Booking end time.
+     *
+     * Format:
+     * HH:mm
+     *
+     * Example:
+     * 11:00
+     */
+    endTime: {
+      type: String,
+      required: true,
+      match: /^([01]\d|2[0-3]):([0-5]\d)$/,
+    },
 
-      description: {
-        type: String,
-        trim: true,
-        maxlength: 1000,
-      },
+    description: {
+      type: String,
+      trim: true,
+      maxlength: 1000,
+    },
 
-      occupiedSlots: {
-        type: [String],
-        required: true,
-        validate: {
-          validator: (
-            slots: string[]
-          ) => {
-            return (
-              Array.isArray(slots) &&
-              slots.length > 0
-            );
-          },
+    /*
+     * 15-minute booking slots.
+     *
+     * Example:
+     *
+     * 10:00 - 11:00
+     *
+     * becomes:
+     *
+     * [
+     *   "10:00",
+     *   "10:15",
+     *   "10:30",
+     *   "10:45"
+     * ]
+     */
+    occupiedSlots: {
+      type: [String],
+      required: true,
 
-          message:
-            "Booking must contain at least one occupied time slot",
+      validate: {
+        validator: (slots: string[]) => {
+          return (
+            Array.isArray(slots) &&
+            slots.length > 0
+          );
         },
-      },
 
-      status: {
-        type: String,
-
-        enum: [
-          "UPCOMING",
-          "COMPLETED",
-          "CANCELLED",
-        ],
-
-        default: "UPCOMING",
-
-        required: true,
-
-        index: true,
+        message:
+          "Booking must contain at least one occupied time slot",
       },
     },
 
-    {
-      timestamps: true,
-    }
-  );
+    /*
+     * Booking status.
+     *
+     * UPCOMING:
+     * Booking is active/upcoming.
+     *
+     * COMPLETED:
+     * Booking has finished.
+     *
+     * CANCELLED:
+     * Booking was cancelled.
+     */
+    status: {
+      type: String,
+
+      enum: [
+        "UPCOMING",
+        "COMPLETED",
+        "CANCELLED",
+      ],
+
+      default: "UPCOMING",
+
+      required: true,
+
+      index: true,
+    },
+  },
+
+  {
+    timestamps: true,
+  }
+);
 
 /*
- * General booking lookup indexes.
+ * =====================================================
+ * GENERAL BOOKING LOOKUP INDEXES
+ * =====================================================
+ */
+
+/*
+ * Useful for:
+ *
+ * - Room bookings by date
+ * - Admin booking views
+ * - Upcoming/completed booking queries
  */
 bookingSchema.index({
   room: 1,
@@ -143,6 +215,12 @@ bookingSchema.index({
   status: 1,
 });
 
+/*
+ * Useful for:
+ *
+ * - Employee's bookings
+ * - User booking history
+ */
 bookingSchema.index({
   user: 1,
   date: 1,
@@ -159,18 +237,20 @@ bookingSchema.index({
  * Example:
  *
  * Booking A:
+ *
  * Room 1
- * 2026-09-25
+ * 2026-10-05
  * 10:00, 10:15, 10:30, 10:45
  *
  * Booking B:
+ *
  * Room 1
- * 2026-09-25
+ * 2026-10-05
  * 10:30, 10:45, 11:00
  *
- * MongoDB sees:
+ * MongoDB detects:
  *
- * Room 1 + 2026-09-25 + 10:30
+ * Room 1 + 2026-10-05 + 10:30
  *
  * already exists.
  *
@@ -178,6 +258,10 @@ bookingSchema.index({
  *
  * CANCELLED bookings are excluded from this index,
  * meaning their time slots become available again.
+ *
+ * COMPLETED bookings remain protected because they
+ * represent historical bookings and should not allow
+ * another booking to overlap the same historical slot.
  */
 bookingSchema.index(
   {
@@ -198,6 +282,12 @@ bookingSchema.index(
     },
   }
 );
+
+/*
+ * =====================================================
+ * MODEL
+ * =====================================================
+ */
 
 export const Booking =
   mongoose.model<IBooking>(

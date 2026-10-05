@@ -15,22 +15,32 @@ import {
 
 import { generateToken } from "../utils/jwt.js";
 
-import { sendPasswordResetEmail } from "../utils/emailService.js";
+import {
+  sendPasswordResetEmail,
+} from "../utils/emailService.js";
 
 /* =====================================================
    COMPANY EMAIL DOMAIN
 ===================================================== */
 
-const ALLOWED_EMAIL_DOMAIN = "@dangote.com";
+const ALLOWED_EMAIL_DOMAIN =
+  "@dangote.com";
 
 /* =====================================================
    VALIDATION SCHEMAS
 ===================================================== */
 
 const registerSchema = z.object({
-  name: z.string().trim().min(2).max(100),
+  name: z
+    .string()
+    .trim()
+    .min(2)
+    .max(100),
 
-  email: z.string().trim().email(),
+  email: z
+    .string()
+    .trim()
+    .email(),
 
   department: z
     .string()
@@ -38,20 +48,31 @@ const registerSchema = z.object({
     .max(100)
     .optional(),
 
-  password: z.string().min(8).max(128),
+  password: z
+    .string()
+    .min(8)
+    .max(128),
 });
 
 const loginSchema = z.object({
-  email: z.string().trim().email(),
+  email: z
+    .string()
+    .trim()
+    .email(),
 
-  password: z.string().min(1),
+  password: z
+    .string()
+    .min(1),
 });
 
 const changePasswordSchema = z
   .object({
     currentPassword: z
       .string()
-      .min(1, "Current password is required"),
+      .min(
+        1,
+        "Current password is required"
+      ),
 
     newPassword: z
       .string()
@@ -78,7 +99,10 @@ const changePasswordSchema = z
     {
       message:
         "New password and confirmation password do not match",
-      path: ["confirmPassword"],
+
+      path: [
+        "confirmPassword",
+      ],
     }
   );
 
@@ -86,9 +110,13 @@ const changePasswordSchema = z
    FORGOT PASSWORD VALIDATION
 ===================================================== */
 
-const forgotPasswordSchema = z.object({
-  email: z.string().trim().email(),
-});
+const forgotPasswordSchema =
+  z.object({
+    email: z
+      .string()
+      .trim()
+      .email(),
+  });
 
 /* =====================================================
    RESET PASSWORD VALIDATION
@@ -99,7 +127,10 @@ const resetPasswordSchema = z
     token: z
       .string()
       .trim()
-      .min(1, "Reset token is required"),
+      .min(
+        1,
+        "Reset token is required"
+      ),
 
     newPassword: z
       .string()
@@ -126,7 +157,10 @@ const resetPasswordSchema = z
     {
       message:
         "New password and confirmation password do not match",
-      path: ["confirmPassword"],
+
+      path: [
+        "confirmPassword",
+      ],
     }
   );
 
@@ -140,7 +174,9 @@ function isDangoteEmail(
   return email
     .trim()
     .toLowerCase()
-    .endsWith(ALLOWED_EMAIL_DOMAIN);
+    .endsWith(
+      ALLOWED_EMAIL_DOMAIN
+    );
 }
 
 /* =====================================================
@@ -151,22 +187,32 @@ function setAuthCookie(
   response: Response,
   token: string
 ) {
-  response.cookie("access_token", token, {
-    httpOnly: true,
+  response.cookie(
+    "access_token",
+    token,
+    {
+      httpOnly: true,
 
-    secure:
-      process.env.NODE_ENV === "production",
+      secure:
+        process.env.NODE_ENV ===
+        "production",
 
-    sameSite:
-      process.env.NODE_ENV === "production"
-        ? "none"
-        : "lax",
+      sameSite:
+        process.env.NODE_ENV ===
+        "production"
+          ? "none"
+          : "lax",
 
-    maxAge:
-      7 * 24 * 60 * 60 * 1000,
+      maxAge:
+        7 *
+        24 *
+        60 *
+        60 *
+        1000,
 
-    path: "/",
-  });
+      path: "/",
+    }
+  );
 }
 
 /* =====================================================
@@ -181,13 +227,19 @@ export async function register(
     /* ---------- Validate request ---------- */
 
     const result =
-      registerSchema.safeParse(req.body);
+      registerSchema.safeParse(
+        req.body
+      );
 
     if (!result.success) {
       return res.status(400).json({
         success: false,
-        message: "Invalid registration data",
-        errors: result.error.flatten(),
+
+        message:
+          "Invalid registration data",
+
+        errors:
+          result.error.flatten(),
       });
     }
 
@@ -201,7 +253,9 @@ export async function register(
     /* ---------- Normalize email ---------- */
 
     const normalizedEmail =
-      email.trim().toLowerCase();
+      email
+        .trim()
+        .toLowerCase();
 
     /* ---------- Check company email ---------- */
 
@@ -212,6 +266,7 @@ export async function register(
     ) {
       return res.status(400).json({
         success: false,
+
         message:
           "Only @dangote.com email addresses are allowed.",
       });
@@ -227,6 +282,7 @@ export async function register(
     if (existingEmail) {
       return res.status(409).json({
         success: false,
+
         message:
           "An account with this email already exists",
       });
@@ -235,43 +291,60 @@ export async function register(
     /* ---------- Hash password ---------- */
 
     const passwordHash =
-      await hashPassword(password);
+      await hashPassword(
+        password
+      );
 
     /* ---------- Create user ---------- */
 
-    const user = await User.create({
-      name,
-      email: normalizedEmail,
-      department,
-      passwordHash,
+    const user =
+      await User.create({
+        name,
 
-      // Public signup can never create an admin.
-      role: "EMPLOYEE",
-    });
+        email:
+          normalizedEmail,
+
+        department,
+
+        passwordHash,
+
+        // Public signup can never create an admin.
+        role: "EMPLOYEE",
+      });
 
     /* ---------- Generate JWT ---------- */
 
-    const token = generateToken(
-      user._id.toString(),
-      user.role
-    );
+    const token =
+      generateToken(
+        user._id.toString(),
+        user.role
+      );
 
     /* ---------- Store JWT ---------- */
 
-    setAuthCookie(res, token);
+    setAuthCookie(
+      res,
+      token
+    );
 
     /* ---------- Response ---------- */
 
     return res.status(201).json({
       success: true,
+
       message:
         "Account created successfully",
 
       user: {
         id: user._id,
+
         name: user.name,
+
         email: user.email,
-        department: user.department,
+
+        department:
+          user.department,
+
         role: user.role,
       },
     });
@@ -283,6 +356,7 @@ export async function register(
 
     return res.status(500).json({
       success: false,
+
       message:
         "Something went wrong",
     });
@@ -301,12 +375,16 @@ export async function login(
     /* ---------- Validate request ---------- */
 
     const result =
-      loginSchema.safeParse(req.body);
+      loginSchema.safeParse(
+        req.body
+      );
 
     if (!result.success) {
       return res.status(400).json({
         success: false,
-        message: "Invalid login data",
+
+        message:
+          "Invalid login data",
       });
     }
 
@@ -318,7 +396,9 @@ export async function login(
     /* ---------- Normalize email ---------- */
 
     const normalizedEmail =
-      email.trim().toLowerCase();
+      email
+        .trim()
+        .toLowerCase();
 
     /* ---------- Check company email ---------- */
 
@@ -329,6 +409,7 @@ export async function login(
     ) {
       return res.status(401).json({
         success: false,
+
         message:
           "Only @dangote.com email addresses are allowed.",
       });
@@ -338,12 +419,16 @@ export async function login(
 
     const user =
       await User.findOne({
-        email: normalizedEmail,
-      }).select("+passwordHash");
+        email:
+          normalizedEmail,
+      }).select(
+        "+passwordHash"
+      );
 
     if (!user) {
       return res.status(401).json({
         success: false,
+
         message:
           "Invalid email or password",
       });
@@ -360,6 +445,7 @@ export async function login(
     if (!passwordValid) {
       return res.status(401).json({
         success: false,
+
         message:
           "Invalid email or password",
       });
@@ -367,26 +453,37 @@ export async function login(
 
     /* ---------- Generate JWT ---------- */
 
-    const token = generateToken(
-      user._id.toString(),
-      user.role
-    );
+    const token =
+      generateToken(
+        user._id.toString(),
+        user.role
+      );
 
     /* ---------- Store JWT ---------- */
 
-    setAuthCookie(res, token);
+    setAuthCookie(
+      res,
+      token
+    );
 
     /* ---------- Response ---------- */
 
     return res.status(200).json({
       success: true,
-      message: "Login successful",
+
+      message:
+        "Login successful",
 
       user: {
         id: user._id,
+
         name: user.name,
+
         email: user.email,
-        department: user.department,
+
+        department:
+          user.department,
+
         role: user.role,
       },
     });
@@ -398,6 +495,7 @@ export async function login(
 
     return res.status(500).json({
       success: false,
+
       message:
         "Something went wrong",
     });
@@ -418,6 +516,7 @@ export async function me(
     if (!req.user) {
       return res.status(401).json({
         success: false,
+
         message:
           "Authentication required",
       });
@@ -425,13 +524,15 @@ export async function me(
 
     /* ---------- Find user ---------- */
 
-    const user = await User.findById(
-      req.user.userId
-    );
+    const user =
+      await User.findById(
+        req.user.userId
+      );
 
     if (!user) {
       return res.status(404).json({
         success: false,
+
         message:
           "User not found",
       });
@@ -444,9 +545,14 @@ export async function me(
 
       user: {
         id: user._id,
+
         name: user.name,
+
         email: user.email,
-        department: user.department,
+
+        department:
+          user.department,
+
         role: user.role,
 
         profileImage:
@@ -482,6 +588,7 @@ export async function me(
 
     return res.status(500).json({
       success: false,
+
       message:
         "Something went wrong",
     });
@@ -502,6 +609,7 @@ export async function changePassword(
     if (!req.user) {
       return res.status(401).json({
         success: false,
+
         message:
           "Authentication required",
       });
@@ -517,8 +625,10 @@ export async function changePassword(
     if (!result.success) {
       return res.status(400).json({
         success: false,
+
         message:
           "Invalid password data",
+
         errors:
           result.error.flatten(),
       });
@@ -534,11 +644,14 @@ export async function changePassword(
     const user =
       await User.findById(
         req.user.userId
-      ).select("+passwordHash");
+      ).select(
+        "+passwordHash"
+      );
 
     if (!user) {
       return res.status(404).json({
         success: false,
+
         message:
           "User not found",
       });
@@ -555,6 +668,7 @@ export async function changePassword(
     if (!currentPasswordValid) {
       return res.status(400).json({
         success: false,
+
         message:
           "Current password is incorrect",
       });
@@ -571,6 +685,7 @@ export async function changePassword(
     if (samePassword) {
       return res.status(400).json({
         success: false,
+
         message:
           "New password must be different from your current password",
       });
@@ -615,6 +730,7 @@ export async function changePassword(
 
     return res.status(200).json({
       success: true,
+
       message:
         "Password changed successfully. Please log in again.",
     });
@@ -626,6 +742,7 @@ export async function changePassword(
 
     return res.status(500).json({
       success: false,
+
       message:
         "Something went wrong",
     });
@@ -651,6 +768,7 @@ export async function forgotPassword(
     if (!result.success) {
       return res.status(400).json({
         success: false,
+
         message:
           "Please provide a valid email address",
       });
@@ -664,16 +782,15 @@ export async function forgotPassword(
         .toLowerCase();
 
     /* =================================================
-       IMPORTANT:
-       Always return the same response for valid
-       email requests.
+       GENERIC RESPONSE
 
-       This prevents attackers from discovering
-       whether a company email has an account.
+       Always return the same response so attackers
+       cannot discover whether an account exists.
     ================================================= */
 
     const genericResponse = {
       success: true,
+
       message:
         "If an account exists for this email, a password reset link has been sent.",
     };
@@ -694,12 +811,13 @@ export async function forgotPassword(
 
     const user =
       await User.findOne({
-        email: normalizedEmail,
+        email:
+          normalizedEmail,
       });
 
     /*
-      Do not reveal whether the account exists.
-    */
+     * Do not reveal whether the account exists.
+     */
 
     if (!user) {
       return res.status(200).json(
@@ -707,12 +825,21 @@ export async function forgotPassword(
       );
     }
 
-    /* ---------- Generate secure token ---------- */
+    /* =================================================
+       GENERATE SECURE RESET TOKEN
+    ================================================= */
 
     const resetToken =
-      crypto.randomBytes(32).toString("hex");
+      crypto
+        .randomBytes(32)
+        .toString("hex");
 
-    /* ---------- Hash token before storing ---------- */
+    /* =================================================
+       HASH TOKEN BEFORE STORING
+
+       The raw token is only sent through the email.
+       The database stores only the SHA-256 hash.
+    ================================================= */
 
     const resetTokenHash =
       crypto
@@ -720,7 +847,11 @@ export async function forgotPassword(
         .update(resetToken)
         .digest("hex");
 
-    /* ---------- Token expiry ---------- */
+    /* =================================================
+       TOKEN EXPIRY
+
+       Reset link expires after 15 minutes.
+    ================================================= */
 
     const resetTokenExpiresAt =
       new Date(
@@ -728,7 +859,9 @@ export async function forgotPassword(
           15 * 60 * 1000
       );
 
-    /* ---------- Store hashed token ---------- */
+    /* =================================================
+       STORE HASHED TOKEN
+    ================================================= */
 
     user.passwordResetTokenHash =
       resetTokenHash;
@@ -738,7 +871,9 @@ export async function forgotPassword(
 
     await user.save();
 
-    /* ---------- Create frontend reset URL ---------- */
+    /* =================================================
+       CREATE FRONTEND RESET URL
+    ================================================= */
 
     const frontendUrl =
       process.env.FRONTEND_URL ||
@@ -747,15 +882,47 @@ export async function forgotPassword(
     const resetUrl =
       `${frontendUrl}/reset-password?token=${resetToken}`;
 
-    /* ---------- Send reset email ---------- */
+    /* =================================================
+       SEND RESET EMAIL USING RESEND
+    ================================================= */
 
-    await sendPasswordResetEmail({
-      to: user.email,
-      name: user.name,
-      resetUrl,
-    });
+    try {
+      await sendPasswordResetEmail({
+        to: user.email,
 
-    /* ---------- Generic response ---------- */
+        name: user.name,
+
+        resetUrl,
+      });
+    } catch (emailError) {
+      /*
+       * Resend failed, so remove the reset token.
+       * This prevents an unusable reset token from
+       * remaining active in the database.
+       */
+
+      user.passwordResetTokenHash =
+        null;
+
+      user.passwordResetExpiresAt =
+        null;
+
+      await user.save();
+
+      console.error(
+        "Failed to send password reset email:",
+        emailError
+      );
+
+      /*
+       * Keep the generic response so we do not reveal
+       * whether the account exists.
+       */
+    }
+
+    /* =================================================
+       GENERIC RESPONSE
+    ================================================= */
 
     return res.status(200).json(
       genericResponse
@@ -767,12 +934,13 @@ export async function forgotPassword(
     );
 
     /*
-      Do not reveal account information
-      through the error response.
-    */
+     * Do not reveal account information
+     * through the error response.
+     */
 
     return res.status(200).json({
       success: true,
+
       message:
         "If an account exists for this email, a password reset link has been sent.",
     });
@@ -798,8 +966,10 @@ export async function resetPassword(
     if (!result.success) {
       return res.status(400).json({
         success: false,
+
         message:
           "Invalid password reset data",
+
         errors:
           result.error.flatten(),
       });
@@ -837,6 +1007,7 @@ export async function resetPassword(
     if (!user) {
       return res.status(400).json({
         success: false,
+
         message:
           "This password reset link is invalid or has expired.",
       });
@@ -853,6 +1024,7 @@ export async function resetPassword(
     if (samePassword) {
       return res.status(400).json({
         success: false,
+
         message:
           "New password must be different from your current password",
       });
@@ -910,6 +1082,7 @@ export async function resetPassword(
 
     return res.status(200).json({
       success: true,
+
       message:
         "Password reset successfully. Please log in with your new password.",
     });
@@ -921,6 +1094,7 @@ export async function resetPassword(
 
     return res.status(500).json({
       success: false,
+
       message:
         "Something went wrong while resetting your password",
     });
@@ -956,6 +1130,7 @@ export function logout(
 
   return res.status(200).json({
     success: true,
+
     message:
       "Logged out successfully",
   });

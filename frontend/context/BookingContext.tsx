@@ -3,10 +3,17 @@
 import {
   createContext,
   useContext,
-  useEffect,
   useState,
   type ReactNode,
 } from "react";
+
+const API_URL =
+  process.env.NEXT_PUBLIC_API_URL ||
+  "http://localhost:5001";
+
+/* =====================================================
+   TYPES
+===================================================== */
 
 export interface Booking {
   id: string;
@@ -17,107 +24,144 @@ export interface Booking {
   endTime: string;
   description?: string;
   location: string;
-  status: "UPCOMING" | "COMPLETED" | "CANCELLED";
+  status:
+    | "UPCOMING"
+    | "COMPLETED"
+    | "CANCELLED";
 }
 
 interface BookingContextType {
   bookings: Booking[];
-  addBooking: (
-    booking: Omit<Booking, "id" | "status">
-  ) => void;
-  cancelBooking: (id: string) => void;
+  refreshBookings: () => Promise<void>;
+  isLoading: boolean;
+  error: string;
 }
+
+/* =====================================================
+   CONTEXT
+===================================================== */
 
 const BookingContext = createContext<
   BookingContextType | undefined
 >(undefined);
+
+/* =====================================================
+   PROVIDER
+===================================================== */
 
 export function BookingProvider({
   children,
 }: {
   children: ReactNode;
 }) {
-  const [bookings, setBookings] = useState<Booking[]>([]);
-  const [isLoaded, setIsLoaded] = useState(false);
+  const [bookings, setBookings] = useState<
+    Booking[]
+  >([]);
 
-  // Load bookings from localStorage
-  useEffect(() => {
+  const [isLoading, setIsLoading] =
+    useState(false);
+
+  const [error, setError] = useState("");
+
+  /* ===================================================
+     FETCH MY BOOKINGS
+  =================================================== */
+
+  async function refreshBookings() {
     try {
-      const savedBookings = localStorage.getItem(
-        "conference-bookings"
+      setIsLoading(true);
+      setError("");
+
+      const response = await fetch(
+        `${API_URL}/api/bookings/my`,
+        {
+          method: "GET",
+          credentials: "include",
+        }
       );
 
-      if (savedBookings) {
-        const parsedBookings: Booking[] =
-          JSON.parse(savedBookings);
+      let result: any = null;
 
-        setBookings(parsedBookings);
+      try {
+        result = await response.json();
+      } catch {
+        result = null;
       }
+
+      if (!response.ok) {
+        throw new Error(
+          result?.message ||
+            "Unable to load bookings"
+        );
+      }
+
+      /*
+       * Convert backend booking objects into
+       * the frontend Booking structure.
+       *
+       * Backend remains the source of truth.
+       */
+      const formattedBookings: Booking[] = (
+        result?.bookings || []
+      ).map((booking: any) => ({
+        id: booking._id,
+
+        roomName:
+          booking.room?.name ||
+          "Conference Room",
+
+        title:
+          booking.title || "",
+
+        date:
+          booking.date || "",
+
+        startTime:
+          booking.startTime || "",
+
+        endTime:
+          booking.endTime || "",
+
+        description:
+          booking.description || "",
+
+        location:
+          booking.room?.location ||
+          "Main Office",
+
+        status:
+          booking.status ||
+          "UPCOMING",
+      }));
+
+      setBookings(formattedBookings);
     } catch (error) {
       console.error(
-        "Failed to load bookings:",
+        "Fetch bookings error:",
         error
+      );
+
+      setError(
+        error instanceof Error
+          ? error.message
+          : "Unable to load bookings"
       );
     } finally {
-      setIsLoaded(true);
+      setIsLoading(false);
     }
-  }, []);
-
-  // Save bookings to localStorage
-  useEffect(() => {
-    if (!isLoaded) {
-      return;
-    }
-
-    try {
-      localStorage.setItem(
-        "conference-bookings",
-        JSON.stringify(bookings)
-      );
-    } catch (error) {
-      console.error(
-        "Failed to save bookings:",
-        error
-      );
-    }
-  }, [bookings, isLoaded]);
-
-  // Add a new booking
-  function addBooking(
-    booking: Omit<Booking, "id" | "status">
-  ) {
-    const newBooking: Booking = {
-      ...booking,
-      id: crypto.randomUUID(),
-      status: "UPCOMING",
-    };
-
-    setBookings((currentBookings) => [
-      ...currentBookings,
-      newBooking,
-    ]);
   }
 
-  // Cancel an existing booking
-  function cancelBooking(id: string) {
-    setBookings((currentBookings) =>
-      currentBookings.map((booking) =>
-        booking.id === id
-          ? {
-              ...booking,
-              status: "CANCELLED",
-            }
-          : booking
-      )
-    );
-  }
+  /* ===================================================
+     PROVIDER
+  =================================================== */
 
   return (
     <BookingContext.Provider
       value={{
         bookings,
-        addBooking,
-        cancelBooking,
+        refreshBookings,
+        isLoading,
+        error,
       }}
     >
       {children}
@@ -125,8 +169,14 @@ export function BookingProvider({
   );
 }
 
+/* =====================================================
+   USE BOOKINGS HOOK
+===================================================== */
+
 export function useBookings() {
-  const context = useContext(BookingContext);
+  const context = useContext(
+    BookingContext
+  );
 
   if (!context) {
     throw new Error(
