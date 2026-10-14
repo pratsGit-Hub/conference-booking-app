@@ -34,6 +34,8 @@ type DisplayResponse = {
   message?: string;
 };
 
+type MeetingStatus = "Upcoming" | "In Progress" | "Completed";
+
 const API_URL =
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:5001";
 
@@ -45,6 +47,25 @@ function getIndiaTime() {
     second: "2-digit",
     hour12: true,
   }).format(new Date());
+}
+
+function getIndiaDate() {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+
+  const values: Record<string, string> = {};
+
+  for (const part of parts) {
+    if (part.type !== "literal") {
+      values[part.type] = part.value;
+    }
+  }
+
+  return `${values.year}-${values.month}-${values.day}`;
 }
 
 function formatDate(dateString: string) {
@@ -62,26 +83,35 @@ function formatDate(dateString: string) {
   });
 }
 
-function getBookingStatus(booking: DisplayBooking) {
-  const today = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Kolkata",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date());
+function timeToMinutes(time: string): number | null {
+  const match = time.trim().match(/^([01]\d|2[0-3]):([0-5]\d)$/);
+
+  if (!match) return null;
+
+  return Number(match[1]) * 60 + Number(match[2]);
+}
+
+function getBookingStatus(booking: DisplayBooking): MeetingStatus {
+  const today = getIndiaDate();
 
   if (booking.date < today) {
     return "Completed";
+  }
+
+  if (booking.date > today) {
+    return "Upcoming";
   }
 
   const [startTime, endTime] = booking.time
     .split("-")
     .map((value) => value.trim());
 
-  const toMinutes = (time: string) => {
-    const [hours, minutes] = time.split(":").map(Number);
-    return hours * 60 + minutes;
-  };
+  const start = timeToMinutes(startTime || "");
+  const end = timeToMinutes(endTime || "");
+
+  if (start === null || end === null) {
+    return "Upcoming";
+  }
 
   const nowParts = new Intl.DateTimeFormat("en-GB", {
     timeZone: "Asia/Kolkata",
@@ -95,9 +125,8 @@ function getBookingStatus(booking: DisplayBooking) {
 
   const nowMinutes = nowParts[0] * 60 + nowParts[1];
 
-  if (!startTime || !endTime) return "Upcoming";
-  if (nowMinutes < toMinutes(startTime)) return "Upcoming";
-  if (nowMinutes >= toMinutes(endTime)) return "Completed";
+  if (nowMinutes < start) return "Upcoming";
+  if (nowMinutes >= end) return "Completed";
 
   return "In Progress";
 }
@@ -110,8 +139,6 @@ export default function DisplayPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [isFullscreen, setIsFullscreen] = useState(false);
-
-  // Room filter state
   const [selectedRoom, setSelectedRoom] = useState("ALL");
 
   const fetchBookings = useCallback(async (manual = false) => {
@@ -180,7 +207,7 @@ export default function DisplayPage() {
 
   const bookings = data?.bookings ?? [];
 
-  // Generate unique room options from the live booking data.
+  // Build the room dropdown from today's booking data.
   const roomOptions = useMemo(() => {
     return Array.from(
       new Set(
@@ -191,18 +218,25 @@ export default function DisplayPage() {
     ).sort((a, b) => a.localeCompare(b));
   }, [bookings]);
 
-  // Apply the selected room filter.
+  // Only Upcoming and In Progress meetings are displayed.
+  // The selected room filter is applied after excluding completed meetings.
   const filteredBookings = useMemo(() => {
+    const activeBookings = bookings.filter((booking) => {
+      const status = getBookingStatus(booking);
+
+      return status === "Upcoming" || status === "In Progress";
+    });
+
     if (selectedRoom === "ALL") {
-      return bookings;
+      return activeBookings;
     }
 
-    return bookings.filter(
+    return activeBookings.filter(
       (booking) => booking.room.trim() === selectedRoom
     );
-  }, [bookings, selectedRoom]);
+  }, [bookings, selectedRoom, clock]);
 
-  // Summary cards always show totals for all today's meetings.
+  // Summary cards show totals across all of today's bookings.
   const roomsBooked = useMemo(
     () => new Set(bookings.map((booking) => booking.room)).size,
     [bookings]
@@ -235,7 +269,6 @@ export default function DisplayPage() {
         <div className="mx-auto flex max-w-[1800px] flex-col justify-between gap-5 lg:flex-row lg:items-center">
           <div className="flex items-center gap-5 sm:gap-8">
             <div className="flex h-16 w-36 shrink-0 items-center justify-center border-r border-[#dce7f8] pr-5 sm:h-20 sm:w-44">
-              {/* Place the official logo at frontend/public/dangote-logo.png */}
               <img
                 src="/dangote-logo.png"
                 alt="Dangote"
@@ -244,6 +277,7 @@ export default function DisplayPage() {
                   event.currentTarget.style.display = "none";
                   const fallback =
                     event.currentTarget.nextElementSibling as HTMLElement | null;
+
                   if (fallback) fallback.style.display = "flex";
                 }}
               />
@@ -356,7 +390,7 @@ export default function DisplayPage() {
                 Auto-refreshes every 10 seconds
               </span>
 
-              {/* Filter by room */}
+              {/* Room filter */}
               <div className="flex items-center gap-2">
                 <label
                   htmlFor="display-room-filter"
@@ -364,9 +398,10 @@ export default function DisplayPage() {
                 >
                   Room:
                 </label>
+
                 <select
                   id="display-room-filter"
-                  aria-label="Filter today's meetings by room"
+                  aria-label="Filter meetings by room"
                   value={selectedRoom}
                   onChange={(event) => setSelectedRoom(event.target.value)}
                   className="min-w-36 rounded-lg border border-[#d8e5fa] bg-white px-3 py-2.5 text-sm font-semibold text-[#143477] outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
@@ -413,15 +448,17 @@ export default function DisplayPage() {
               <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-[#edf4ff] text-blue-600">
                 <CalendarCheck size={32} />
               </div>
+
               <h3 className="mt-5 text-lg font-bold text-[#142f70]">
                 {selectedRoom === "ALL"
-                  ? "No meetings scheduled today"
-                  : `No meetings scheduled in ${selectedRoom}`}
+                  ? "No upcoming or in-progress meetings"
+                  : `No active meetings in ${selectedRoom}`}
               </h3>
+
               <p className="mt-2 max-w-md text-sm leading-6 text-slate-500">
                 {selectedRoom === "ALL"
-                  ? "There are no confirmed bookings for today. This schedule refreshes automatically when new bookings become available."
-                  : "Try selecting another room or choose All rooms to see the full schedule."}
+                  ? "There are no upcoming or in-progress meetings scheduled for today."
+                  : "Try another room or select All rooms to view other active meetings."}
               </p>
             </div>
           ) : (
@@ -477,7 +514,10 @@ export default function DisplayPage() {
 
                           <td className="border-b border-[#e5edf9] px-5 py-6">
                             <div className="flex items-center gap-3">
-                              <MapPin size={21} className="shrink-0 text-blue-600" />
+                              <MapPin
+                                size={21}
+                                className="shrink-0 text-blue-600"
+                              />
                               <div>
                                 <p className="font-semibold text-[#142f70]">
                                   {booking.room}
@@ -500,7 +540,10 @@ export default function DisplayPage() {
 
                           <td className="border-b border-[#e5edf9] px-5 py-6">
                             <div className="flex items-center gap-2 whitespace-nowrap text-slate-600">
-                              <CalendarDays size={19} className="text-blue-600" />
+                              <CalendarDays
+                                size={19}
+                                className="text-blue-600"
+                              />
                               {booking.date}
                             </div>
                           </td>
@@ -592,6 +635,7 @@ function SummaryCard({
       >
         {icon}
       </div>
+
       <div>
         <p className="text-sm font-medium text-slate-500 sm:text-base">
           {label}
