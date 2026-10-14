@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -62,9 +63,14 @@ function formatDate(dateString: string) {
 }
 
 function getBookingStatus(booking: DisplayBooking) {
-  if (booking.date < new Date().toLocaleDateString("en-CA", {
+  const today = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Kolkata",
-  })) {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+
+  if (booking.date < today) {
     return "Completed";
   }
 
@@ -82,7 +88,10 @@ function getBookingStatus(booking: DisplayBooking) {
     hour: "2-digit",
     minute: "2-digit",
     hourCycle: "h23",
-  }).format(new Date()).split(":").map(Number);
+  })
+    .format(new Date())
+    .split(":")
+    .map(Number);
 
   const nowMinutes = nowParts[0] * 60 + nowParts[1];
 
@@ -101,6 +110,9 @@ export default function DisplayPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [isFullscreen, setIsFullscreen] = useState(false);
+
+  // Room filter state
+  const [selectedRoom, setSelectedRoom] = useState("ALL");
 
   const fetchBookings = useCallback(async (manual = false) => {
     if (manual) setRefreshing(true);
@@ -168,6 +180,29 @@ export default function DisplayPage() {
 
   const bookings = data?.bookings ?? [];
 
+  // Generate unique room options from the live booking data.
+  const roomOptions = useMemo(() => {
+    return Array.from(
+      new Set(
+        bookings
+          .map((booking) => booking.room?.trim())
+          .filter((room): room is string => Boolean(room))
+      )
+    ).sort((a, b) => a.localeCompare(b));
+  }, [bookings]);
+
+  // Apply the selected room filter.
+  const filteredBookings = useMemo(() => {
+    if (selectedRoom === "ALL") {
+      return bookings;
+    }
+
+    return bookings.filter(
+      (booking) => booking.room.trim() === selectedRoom
+    );
+  }, [bookings, selectedRoom]);
+
+  // Summary cards always show totals for all today's meetings.
   const roomsBooked = useMemo(
     () => new Set(bookings.map((booking) => booking.room)).size,
     [bookings]
@@ -200,7 +235,7 @@ export default function DisplayPage() {
         <div className="mx-auto flex max-w-[1800px] flex-col justify-between gap-5 lg:flex-row lg:items-center">
           <div className="flex items-center gap-5 sm:gap-8">
             <div className="flex h-16 w-36 shrink-0 items-center justify-center border-r border-[#dce7f8] pr-5 sm:h-20 sm:w-44">
-              {/* Put your official logo at frontend/public/dangote-logo.png */}
+              {/* Place the official logo at frontend/public/dangote-logo.png */}
               <img
                 src="/dangote-logo.png"
                 alt="Dangote"
@@ -307,7 +342,7 @@ export default function DisplayPage() {
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-4">
+            <div className="flex flex-wrap items-center gap-3">
               <span className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700">
                 <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-emerald-500" />
                 Live Schedule
@@ -320,6 +355,30 @@ export default function DisplayPage() {
                 />
                 Auto-refreshes every 10 seconds
               </span>
+
+              {/* Filter by room */}
+              <div className="flex items-center gap-2">
+                <label
+                  htmlFor="display-room-filter"
+                  className="whitespace-nowrap text-sm font-medium text-slate-600"
+                >
+                  Room:
+                </label>
+                <select
+                  id="display-room-filter"
+                  aria-label="Filter today's meetings by room"
+                  value={selectedRoom}
+                  onChange={(event) => setSelectedRoom(event.target.value)}
+                  className="min-w-36 rounded-lg border border-[#d8e5fa] bg-white px-3 py-2.5 text-sm font-semibold text-[#143477] outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                >
+                  <option value="ALL">All rooms</option>
+                  {roomOptions.map((room) => (
+                    <option key={room} value={room}>
+                      {room}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
               <button
                 onClick={() => fetchBookings(true)}
@@ -349,17 +408,20 @@ export default function DisplayPage() {
                 Loading today&apos;s bookings...
               </p>
             </div>
-          ) : bookings.length === 0 ? (
+          ) : filteredBookings.length === 0 ? (
             <div className="flex min-h-64 flex-col items-center justify-center px-5 py-12 text-center">
               <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-[#edf4ff] text-blue-600">
                 <CalendarCheck size={32} />
               </div>
               <h3 className="mt-5 text-lg font-bold text-[#142f70]">
-                No meetings scheduled today
+                {selectedRoom === "ALL"
+                  ? "No meetings scheduled today"
+                  : `No meetings scheduled in ${selectedRoom}`}
               </h3>
               <p className="mt-2 max-w-md text-sm leading-6 text-slate-500">
-                There are no confirmed bookings for today. This schedule
-                refreshes automatically when new bookings become available.
+                {selectedRoom === "ALL"
+                  ? "There are no confirmed bookings for today. This schedule refreshes automatically when new bookings become available."
+                  : "Try selecting another room or choose All rooms to see the full schedule."}
               </p>
             </div>
           ) : (
@@ -388,7 +450,7 @@ export default function DisplayPage() {
                   </thead>
 
                   <tbody>
-                    {bookings.map((booking) => {
+                    {filteredBookings.map((booking) => {
                       const status = getBookingStatus(booking);
 
                       return (
@@ -455,7 +517,7 @@ export default function DisplayPage() {
 
               {/* Mobile schedule cards */}
               <div className="space-y-4 p-4 lg:hidden sm:p-6">
-                {bookings.map((booking) => {
+                {filteredBookings.map((booking) => {
                   const status = getBookingStatus(booking);
 
                   return (
@@ -505,9 +567,7 @@ export default function DisplayPage() {
       <footer className="mt-2 border-t border-[#dce7f8] bg-white/70 px-5 py-5 sm:px-8 lg:px-10">
         <div className="mx-auto flex max-w-[1800px] flex-col justify-between gap-2 text-xs text-slate-500 sm:flex-row sm:items-center sm:text-sm">
           <p>Conference Room Booking System · Dangote</p>
-          <p>
-            Last updated at {lastUpdated || "--:--:--"} IST
-          </p>
+          <p>Last updated at {lastUpdated || "--:--:--"} IST</p>
         </div>
       </footer>
     </main>
@@ -532,7 +592,6 @@ function SummaryCard({
       >
         {icon}
       </div>
-
       <div>
         <p className="text-sm font-medium text-slate-500 sm:text-base">
           {label}
