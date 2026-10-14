@@ -2,6 +2,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import type { ReactNode } from "react";
 import {
   CalendarDays,
   Clock3,
@@ -60,9 +61,7 @@ function getIndiaDate() {
   const values: Record<string, string> = {};
 
   for (const part of parts) {
-    if (part.type !== "literal") {
-      values[part.type] = part.value;
-    }
+    if (part.type !== "literal") values[part.type] = part.value;
   }
 
   return `${values.year}-${values.month}-${values.day}`;
@@ -94,13 +93,8 @@ function timeToMinutes(time: string): number | null {
 function getBookingStatus(booking: DisplayBooking): MeetingStatus {
   const today = getIndiaDate();
 
-  if (booking.date < today) {
-    return "Completed";
-  }
-
-  if (booking.date > today) {
-    return "Upcoming";
-  }
+  if (booking.date < today) return "Completed";
+  if (booking.date > today) return "Upcoming";
 
   const [startTime, endTime] = booking.time
     .split("-")
@@ -109,9 +103,7 @@ function getBookingStatus(booking: DisplayBooking): MeetingStatus {
   const start = timeToMinutes(startTime || "");
   const end = timeToMinutes(endTime || "");
 
-  if (start === null || end === null) {
-    return "Upcoming";
-  }
+  if (start === null || end === null) return "Upcoming";
 
   const nowParts = new Intl.DateTimeFormat("en-GB", {
     timeZone: "Asia/Kolkata",
@@ -177,12 +169,13 @@ export default function DisplayPage() {
     const updateClock = () => setClock(getIndiaTime());
 
     updateClock();
-    fetchBookings();
+    void fetchBookings();
 
     const clockInterval = window.setInterval(updateClock, 1000);
-    const bookingInterval = window.setInterval(() => {
-      fetchBookings();
-    }, 10000);
+    const bookingInterval = window.setInterval(
+      () => void fetchBookings(),
+      10000
+    );
 
     return () => {
       window.clearInterval(clockInterval);
@@ -207,36 +200,37 @@ export default function DisplayPage() {
 
   const bookings = data?.bookings ?? [];
 
-  // Build the room dropdown from today's booking data.
-  const roomOptions = useMemo(() => {
-    return Array.from(
-      new Set(
-        bookings
-          .map((booking) => booking.room?.trim())
-          .filter((room): room is string => Boolean(room))
-      )
-    ).sort((a, b) => a.localeCompare(b));
-  }, [bookings]);
+  const roomOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          bookings
+            .map((booking) => booking.room?.trim())
+            .filter((room): room is string => Boolean(room))
+        )
+      ).sort((a, b) => a.localeCompare(b)),
+    [bookings]
+  );
 
-  // Only Upcoming and In Progress meetings are displayed.
-  // The selected room filter is applied after excluding completed meetings.
-  const filteredBookings = useMemo(() => {
-    const activeBookings = bookings.filter((booking) => {
-      const status = getBookingStatus(booking);
+  const isSpecificRoomSelected = selectedRoom !== "ALL";
 
-      return status === "Upcoming" || status === "In Progress";
-    });
+  const selectedRoomBookings = useMemo(
+    () =>
+      selectedRoom === "ALL"
+        ? bookings
+        : bookings.filter((booking) => booking.room.trim() === selectedRoom),
+    [bookings, selectedRoom]
+  );
 
-    if (selectedRoom === "ALL") {
-      return activeBookings;
-    }
+  const filteredBookings = useMemo(
+    () =>
+      selectedRoomBookings.filter((booking) => {
+        const status = getBookingStatus(booking);
+        return status === "Upcoming" || status === "In Progress";
+      }),
+    [selectedRoomBookings, clock]
+  );
 
-    return activeBookings.filter(
-      (booking) => booking.room.trim() === selectedRoom
-    );
-  }, [bookings, selectedRoom, clock]);
-
-  // Summary cards show totals across all of today's bookings.
   const roomsBooked = useMemo(
     () => new Set(bookings.map((booking) => booking.room)).size,
     [bookings]
@@ -248,6 +242,14 @@ export default function DisplayPage() {
         (booking) => getBookingStatus(booking) === "Upcoming"
       ).length,
     [bookings, clock]
+  );
+
+  const selectedRoomUpcoming = useMemo(
+    () =>
+      selectedRoomBookings.filter(
+        (booking) => getBookingStatus(booking) === "Upcoming"
+      ).length,
+    [selectedRoomBookings, clock]
   );
 
   const toggleFullscreen = async () => {
@@ -265,110 +267,139 @@ export default function DisplayPage() {
   return (
     <main className="min-h-screen bg-[#edf4ff] text-[#132f70]">
       {/* Header */}
-      <header className="border-b border-[#dce7f8] bg-white px-5 py-5 sm:px-8 lg:px-10">
-        <div className="mx-auto flex max-w-[1800px] flex-col justify-between gap-5 lg:flex-row lg:items-center">
-          <div className="flex items-center gap-5 sm:gap-8">
-            <div className="flex h-16 w-36 shrink-0 items-center justify-center border-r border-[#dce7f8] pr-5 sm:h-20 sm:w-44">
+      <header className="border-b border-[#dce7f8] bg-white px-5 py-3 sm:px-8 lg:px-10">
+        <div className="mx-auto flex max-w-[1800px] flex-col justify-between gap-4 lg:flex-row lg:items-center">
+          {/* Dangote logo and title */}
+          <div className="flex items-center gap-4 sm:gap-6">
+            <div className="flex h-12 w-24 shrink-0 items-center justify-center border-r border-[#dce7f8] pr-3 sm:h-14 sm:w-32">
               <img
                 src="/dangote-logo.png"
                 alt="Dangote"
-                className="max-h-16 max-w-full object-contain"
+                className="max-h-12 max-w-full object-contain"
                 onError={(event) => {
                   event.currentTarget.style.display = "none";
                   const fallback =
                     event.currentTarget.nextElementSibling as HTMLElement | null;
-
                   if (fallback) fallback.style.display = "flex";
                 }}
               />
+
               <div className="hidden flex-col items-center justify-center text-center">
-                <Building2 size={30} />
-                <span className="mt-1 text-sm font-black tracking-widest">
+                <Building2 size={22} />
+                <span className="mt-1 text-[10px] font-black tracking-widest">
                   DANGOTE
                 </span>
               </div>
             </div>
 
             <div>
-              <h1 className="text-2xl font-extrabold tracking-tight text-[#142f70] sm:text-3xl lg:text-4xl">
+              <h1 className="text-xl font-extrabold tracking-tight text-[#142f70] sm:text-2xl lg:text-3xl">
                 Conference Room Bookings
               </h1>
-              <p className="mt-1 text-sm text-slate-500 sm:text-base">
+              <p className="mt-1 text-xs text-slate-500 sm:text-sm">
                 Today&apos;s meetings at a glance
               </p>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center justify-between gap-4 sm:justify-end">
-            <div className="flex items-center gap-3 rounded-2xl border border-[#e0eaff] bg-[#f5f8ff] px-4 py-3">
-              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#e5efff] text-blue-700">
+          {/* Smaller time and fullscreen cards */}
+          <div className="flex flex-wrap items-stretch gap-2.5">
+            {/* Time card */}
+            <div className="flex h-[88px] items-center gap-3 rounded-[20px] border border-[#e0eaff] bg-[#f5f8ff] px-4 sm:h-[96px] sm:gap-3.5 sm:px-5">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#e5efff] text-blue-700 sm:h-12 sm:w-12">
                 <Clock3 size={25} />
               </div>
+
               <div>
-                <p className="text-xl font-bold tabular-nums text-[#142f70] sm:text-2xl">
+                <p className="whitespace-nowrap text-xl font-bold tabular-nums text-[#142f70] sm:text-2xl">
                   {clock || "--:--:--"}
                 </p>
-                <p className="text-xs text-slate-500 sm:text-sm">
+                <p className="mt-0.5 text-xs text-slate-500 sm:text-sm">
                   India Standard Time
                 </p>
-                <p className="mt-1 text-xs text-slate-500">
+                <p className="mt-0.5 text-[10px] text-slate-500 sm:text-xs">
                   {data?.date ? formatDate(data.date) : "Loading date..."}
                 </p>
               </div>
             </div>
 
+            {/* Full screen card: exactly the same dimensions */}
             <button
+              type="button"
               onClick={toggleFullscreen}
-              className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl border border-[#d9e6ff] bg-[#edf4ff] px-4 py-3 text-sm font-semibold text-[#143477] transition hover:bg-[#dce9ff] focus:outline-none focus:ring-2 focus:ring-blue-400"
-              aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+              aria-label={
+                isFullscreen ? "Exit fullscreen" : "Enter fullscreen"
+              }
+              className="flex h-[88px] items-center justify-center gap-2 rounded-[20px] border border-[#d9e6ff] bg-[#edf4ff] px-4 text-sm font-bold text-[#143477] transition hover:bg-[#dce9ff] focus:outline-none focus:ring-2 focus:ring-blue-400 sm:h-[96px] sm:px-5 sm:text-base"
             >
               {isFullscreen ? (
-                <Minimize2 size={18} />
+                <Minimize2 size={20} className="shrink-0" />
               ) : (
-                <Maximize2 size={18} />
+                <Maximize2 size={20} className="shrink-0" />
               )}
-              {isFullscreen ? "Exit full screen" : "Full screen"}
+              <span className="whitespace-nowrap">
+                {isFullscreen ? "Exit full screen" : "Full screen"}
+              </span>
             </button>
           </div>
         </div>
       </header>
 
-      {/* Main dashboard */}
+      {/* Dashboard */}
       <section className="mx-auto max-w-[1800px] space-y-7 px-5 py-7 sm:px-8 sm:py-9 lg:px-10">
         {/* Summary cards */}
-        <div className="grid grid-cols-1 gap-5 md:grid-cols-3">
+        <div
+          className={`grid grid-cols-1 gap-5 ${
+            isSpecificRoomSelected ? "md:grid-cols-2" : "md:grid-cols-3"
+          }`}
+        >
           <SummaryCard
             icon={<CalendarDays size={29} />}
             label="Today's Meetings"
-            value={loading ? "—" : bookings.length}
+            value={loading ? "—" : selectedRoomBookings.length}
             iconClass="bg-blue-50 text-blue-700"
           />
 
-          <SummaryCard
-            icon={<DoorOpen size={29} />}
-            label="Rooms Booked"
-            value={loading ? "—" : roomsBooked}
-            iconClass="bg-emerald-50 text-emerald-600"
-          />
+          {!isSpecificRoomSelected && (
+            <SummaryCard
+              icon={<DoorOpen size={29} />}
+              label="Rooms Booked"
+              value={loading ? "—" : roomsBooked}
+              iconClass="bg-emerald-50 text-emerald-600"
+            />
+          )}
 
           <SummaryCard
             icon={<CalendarCheck size={29} />}
-            label="Upcoming Meetings"
-            value={loading ? "—" : upcomingMeetings}
+            label={
+              isSpecificRoomSelected
+                ? "Upcoming Bookings"
+                : "Upcoming Meetings"
+            }
+            value={
+              loading
+                ? "—"
+                : isSpecificRoomSelected
+                  ? selectedRoomUpcoming
+                  : upcomingMeetings
+            }
             iconClass="bg-violet-50 text-violet-600"
           />
         </div>
 
-        {/* Schedule panel */}
+        {/* Live schedule */}
         <section className="overflow-hidden rounded-2xl border border-[#dfe9f8] bg-white shadow-[0_4px_12px_rgba(22,54,112,0.07)]">
           <div className="flex flex-col justify-between gap-4 border-b border-[#e5edf9] px-5 py-6 sm:px-7 lg:flex-row lg:items-center">
             <div className="flex items-center gap-4">
               <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-[#153778] text-white shadow-sm">
                 <CalendarDays size={27} />
               </div>
+
               <div>
                 <h2 className="text-xl font-bold text-[#142f70] sm:text-2xl">
-                  Today&apos;s Schedule
+                  {selectedRoom === "ALL"
+                    ? "Today's Schedule"
+                    : `${selectedRoom} Schedule`}
                 </h2>
                 <p className="mt-1 text-sm text-slate-500 sm:text-base">
                   {data?.date ? formatDate(data.date) : "Loading schedule..."}
@@ -390,7 +421,6 @@ export default function DisplayPage() {
                 Auto-refreshes every 10 seconds
               </span>
 
-              {/* Room filter */}
               <div className="flex items-center gap-2">
                 <label
                   htmlFor="display-room-filter"
@@ -401,7 +431,6 @@ export default function DisplayPage() {
 
                 <select
                   id="display-room-filter"
-                  aria-label="Filter meetings by room"
                   value={selectedRoom}
                   onChange={(event) => setSelectedRoom(event.target.value)}
                   className="min-w-36 rounded-lg border border-[#d8e5fa] bg-white px-3 py-2.5 text-sm font-semibold text-[#143477] outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
@@ -416,7 +445,8 @@ export default function DisplayPage() {
               </div>
 
               <button
-                onClick={() => fetchBookings(true)}
+                type="button"
+                onClick={() => void fetchBookings(true)}
                 disabled={refreshing}
                 className="inline-flex items-center gap-2 rounded-lg border border-[#d8e5fa] px-3 py-2 text-sm font-semibold text-[#143477] transition hover:bg-[#f2f6ff] disabled:opacity-50"
               >
@@ -463,26 +493,20 @@ export default function DisplayPage() {
             </div>
           ) : (
             <>
-              {/* Desktop/tablet schedule */}
               <div className="hidden overflow-x-auto p-6 lg:block">
                 <table className="w-full min-w-[1000px] border-separate border-spacing-0 text-left">
                   <thead>
                     <tr className="bg-[#eaf2ff] text-xs font-bold uppercase tracking-wider text-slate-600">
-                      {[
-                        "Time",
-                        "Meeting",
-                        "Room",
-                        "Booker",
-                        "Date",
-                        "Status",
-                      ].map((heading) => (
-                        <th
-                          key={heading}
-                          className="border-y border-[#d8e6ff] px-5 py-4 first:rounded-l-xl last:rounded-r-xl"
-                        >
-                          {heading}
-                        </th>
-                      ))}
+                      {["Time", "Meeting", "Room", "Booker", "Date", "Status"].map(
+                        (heading) => (
+                          <th
+                            key={heading}
+                            className="border-y border-[#d8e6ff] px-5 py-4 first:rounded-l-xl last:rounded-r-xl"
+                          >
+                            {heading}
+                          </th>
+                        )
+                      )}
                     </tr>
                   </thead>
 
@@ -514,10 +538,7 @@ export default function DisplayPage() {
 
                           <td className="border-b border-[#e5edf9] px-5 py-6">
                             <div className="flex items-center gap-3">
-                              <MapPin
-                                size={21}
-                                className="shrink-0 text-blue-600"
-                              />
+                              <MapPin size={21} className="shrink-0 text-blue-600" />
                               <div>
                                 <p className="font-semibold text-[#142f70]">
                                   {booking.room}
@@ -540,10 +561,7 @@ export default function DisplayPage() {
 
                           <td className="border-b border-[#e5edf9] px-5 py-6">
                             <div className="flex items-center gap-2 whitespace-nowrap text-slate-600">
-                              <CalendarDays
-                                size={19}
-                                className="text-blue-600"
-                              />
+                              <CalendarDays size={19} className="text-blue-600" />
                               {booking.date}
                             </div>
                           </td>
@@ -558,55 +576,33 @@ export default function DisplayPage() {
                 </table>
               </div>
 
-              {/* Mobile schedule cards */}
               <div className="space-y-4 p-4 lg:hidden sm:p-6">
-                {filteredBookings.map((booking) => {
-                  const status = getBookingStatus(booking);
+                {filteredBookings.map((booking) => (
+                  <article
+                    key={booking.id}
+                    className="rounded-xl border border-[#dce8fb] bg-[#f9fbff] p-4 sm:p-5"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <h3 className="text-base font-bold text-[#142f70] sm:text-lg">
+                        {booking.meeting}
+                      </h3>
+                      <StatusBadge status={getBookingStatus(booking)} />
+                    </div>
 
-                  return (
-                    <article
-                      key={booking.id}
-                      className="rounded-xl border border-[#dce8fb] bg-[#f9fbff] p-4 sm:p-5"
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <h3 className="text-base font-bold text-[#142f70] sm:text-lg">
-                          {booking.meeting}
-                        </h3>
-                        <StatusBadge status={status} />
-                      </div>
-
-                      <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
-                        <Detail
-                          icon={<Clock3 size={18} />}
-                          label="TIME"
-                          value={booking.time}
-                        />
-                        <Detail
-                          icon={<MapPin size={18} />}
-                          label="ROOM"
-                          value={booking.room}
-                        />
-                        <Detail
-                          icon={<UserRound size={18} />}
-                          label="BOOKER"
-                          value={booking.booker}
-                        />
-                        <Detail
-                          icon={<CalendarDays size={18} />}
-                          label="DATE"
-                          value={booking.date}
-                        />
-                      </div>
-                    </article>
-                  );
-                })}
+                    <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                      <Detail icon={<Clock3 size={18} />} label="TIME" value={booking.time} />
+                      <Detail icon={<MapPin size={18} />} label="ROOM" value={booking.room} />
+                      <Detail icon={<UserRound size={18} />} label="BOOKER" value={booking.booker} />
+                      <Detail icon={<CalendarDays size={18} />} label="DATE" value={booking.date} />
+                    </div>
+                  </article>
+                ))}
               </div>
             </>
           )}
         </section>
       </section>
 
-      {/* Footer */}
       <footer className="mt-2 border-t border-[#dce7f8] bg-white/70 px-5 py-5 sm:px-8 lg:px-10">
         <div className="mx-auto flex max-w-[1800px] flex-col justify-between gap-2 text-xs text-slate-500 sm:flex-row sm:items-center sm:text-sm">
           <p>Conference Room Booking System · Dangote</p>
@@ -623,16 +619,14 @@ function SummaryCard({
   value,
   iconClass,
 }: {
-  icon: React.ReactNode;
+  icon: ReactNode;
   label: string;
   value: number | string;
   iconClass: string;
 }) {
   return (
     <div className="flex min-h-36 items-center gap-5 rounded-2xl border border-[#dfe9f8] bg-white p-6 shadow-[0_4px_12px_rgba(22,54,112,0.06)] transition hover:-translate-y-0.5 hover:shadow-md sm:p-8">
-      <div
-        className={`flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl ${iconClass}`}
-      >
+      <div className={`flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl ${iconClass}`}>
         {icon}
       </div>
 
@@ -652,26 +646,16 @@ function StatusBadge({ status }: { status: string }) {
   const styles: Record<string, string> = {
     Upcoming: "bg-blue-50 text-blue-700 ring-blue-200",
     "In Progress": "bg-emerald-50 text-emerald-700 ring-emerald-200",
-    Completed: "bg-slate-100 text-slate-600 ring-slate-200",
   };
 
   const dotStyles: Record<string, string> = {
     Upcoming: "bg-blue-600",
     "In Progress": "bg-emerald-500",
-    Completed: "bg-slate-500",
   };
 
   return (
-    <span
-      className={`inline-flex items-center gap-2 whitespace-nowrap rounded-full px-3 py-1.5 text-xs font-bold ring-1 ring-inset sm:text-sm ${
-        styles[status] || styles.Upcoming
-      }`}
-    >
-      <span
-        className={`h-2 w-2 rounded-full ${
-          dotStyles[status] || dotStyles.Upcoming
-        }`}
-      />
+    <span className={`inline-flex items-center gap-2 whitespace-nowrap rounded-full px-3 py-1.5 text-xs font-bold ring-1 ring-inset sm:text-sm ${styles[status] || styles.Upcoming}`}>
+      <span className={`h-2 w-2 rounded-full ${dotStyles[status] || dotStyles.Upcoming}`} />
       {status}
     </span>
   );
@@ -682,7 +666,7 @@ function Detail({
   label,
   value,
 }: {
-  icon: React.ReactNode;
+  icon: ReactNode;
   label: string;
   value: string;
 }) {
