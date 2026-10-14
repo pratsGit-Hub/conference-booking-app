@@ -1,3 +1,4 @@
+
 import "dotenv/config";
 
 import express from "express";
@@ -14,14 +15,10 @@ import roomRoutes from "./routes/roomRoutes.js";
 import bookingRoutes from "./routes/bookingRoutes.js";
 import adminRoutes from "./routes/adminRoutes.js";
 import notificationRoutes from "./routes/notificationRoutes.js";
+import displayRoutes from "./routes/displayRoutes.js";
 
-import {
-  startReminderScheduler,
-} from "./utils/reminderScheduler.js";
-
-import {
-  verifyEmailConnection,
-} from "./utils/emailService.js";
+import { startReminderScheduler } from "./utils/reminderScheduler.js";
+import { verifyEmailConnection } from "./utils/emailService.js";
 
 /* =====================================================
    APPLICATION
@@ -30,13 +27,8 @@ import {
 const app = express();
 
 /*
- * Render runs the application behind a reverse proxy.
- *
- * This allows Express and express-rate-limit to correctly
- * determine the original client IP address.
- *
- * IMPORTANT:
- * This must be set BEFORE the rate limiter.
+ * Render runs behind a reverse proxy.
+ * Configure this before rate limiting.
  */
 app.set("trust proxy", 1);
 
@@ -44,20 +36,16 @@ app.set("trust proxy", 1);
    CONFIGURATION
 ===================================================== */
 
-const PORT =
-  Number(process.env.PORT) || 5000;
+const PORT = Number(process.env.PORT) || 5001;
 
 const FRONTEND_URL =
-  process.env.FRONTEND_URL ||
-  "http://localhost:3000";
+  process.env.FRONTEND_URL || "http://localhost:3000";
 
 /* =====================================================
    SECURITY
 ===================================================== */
 
-app.use(
-  helmet()
-);
+app.use(helmet());
 
 /* =====================================================
    CORS
@@ -74,22 +62,14 @@ app.use(
    RATE LIMITING
 ===================================================== */
 
-const apiLimiter =
-  rateLimit({
-    windowMs:
-      15 * 60 * 1000,
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 200,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
-    max: 200,
-
-    standardHeaders: true,
-
-    legacyHeaders: false,
-  });
-
-app.use(
-  "/api",
-  apiLimiter
-);
+app.use("/api", apiLimiter);
 
 /* =====================================================
    BODY PARSING
@@ -111,95 +91,90 @@ app.use(
    COOKIES
 ===================================================== */
 
-app.use(
-  cookieParser()
-);
+app.use(cookieParser());
 
 /* =====================================================
    HEALTH CHECK
 ===================================================== */
 
-app.get(
-  "/api/health",
-  (_req, res) => {
-    return res.status(200).json({
-      success: true,
-
-      message:
-        "Conference Booking API is running",
-    });
-  }
-);
+app.get("/api/health", (_req, res) => {
+  return res.status(200).json({
+    success: true,
+    message: "Conference Booking API is running",
+  });
+});
 
 /* =====================================================
    AUTHENTICATION
 ===================================================== */
 
-app.use(
-  "/api/auth",
-  authRoutes
-);
+app.use("/api/auth", authRoutes);
 
 /* =====================================================
    USER MANAGEMENT
 ===================================================== */
 
-app.use(
-  "/api/users",
-  userRoutes
-);
+app.use("/api/users", userRoutes);
 
 /* =====================================================
    ROOM MANAGEMENT
 ===================================================== */
 
-app.use(
-  "/api/rooms",
-  roomRoutes
-);
+app.use("/api/rooms", roomRoutes);
 
 /* =====================================================
    BOOKING MANAGEMENT
 ===================================================== */
 
-app.use(
-  "/api/bookings",
-  bookingRoutes
-);
+app.use("/api/bookings", bookingRoutes);
 
 /* =====================================================
    ADMIN MANAGEMENT
 ===================================================== */
 
-app.use(
-  "/api/admin",
-  adminRoutes
-);
+app.use("/api/admin", adminRoutes);
 
 /* =====================================================
    NOTIFICATION MANAGEMENT
 ===================================================== */
 
-app.use(
-  "/api/notifications",
-  notificationRoutes
-);
+app.use("/api/notifications", notificationRoutes);
+
+/* =====================================================
+   OFFICE TV BOOKING DISPLAY
+===================================================== */
+
+/*
+ * Public, read-only endpoint:
+ *
+ * GET /api/display/today
+ *
+ * Shows today's bookings only.
+ * No employee or admin login is required.
+ *
+ * Visible fields:
+ * - Meeting title
+ * - Conference room name
+ * - Booking date
+ * - Start and end time
+ * - Employee who booked it
+ *
+ * Meeting descriptions and email addresses
+ * are not returned by the display controller.
+ */
+
+app.use("/api/display", displayRoutes);
 
 /* =====================================================
    404 HANDLER
 ===================================================== */
 
-app.use(
-  "/api",
-  (_req, res) => {
-    return res.status(404).json({
-      success: false,
-
-      message:
-        "API endpoint not found",
-    });
-  }
-);
+app.use("/api", (_req, res) => {
+  return res.status(404).json({
+    success: false,
+    message: "API endpoint not found",
+  });
+});
 
 /* =====================================================
    GLOBAL ERROR HANDLER
@@ -212,16 +187,11 @@ app.use(
     res: express.Response,
     _next: express.NextFunction
   ) => {
-    console.error(
-      "Unhandled server error:",
-      error
-    );
+    console.error("Unhandled server error:", error);
 
     return res.status(500).json({
       success: false,
-
-      message:
-        "Internal server error",
+      message: "Internal server error",
     });
   }
 );
@@ -232,43 +202,23 @@ app.use(
 
 async function startServer() {
   try {
-    /* =================================================
-       CONNECT TO DATABASE FIRST
-    ================================================= */
+    /* ================================================
+       CONNECT TO DATABASE
+    ================================================ */
 
     await connectDatabase();
 
-    console.log(
-      "Database connection established."
-    );
+    console.log("Database connection established.");
 
-    /* =================================================
-       VERIFY RESEND EMAIL SERVICE
-
-       Resend is used through its HTTPS API.
-
-       We are NOT using:
-       - Gmail SMTP
-       - SMTP port 25
-       - SMTP port 465
-       - SMTP port 587
-
-       The actual email send happens through:
-       resend.emails.send()
-    ================================================= */
+    /* ================================================
+       VERIFY EMAIL SERVICE
+    ================================================ */
 
     try {
       await verifyEmailConnection();
 
-      console.log(
-        "Email API verification completed."
-      );
+      console.log("Email API verification completed.");
     } catch (emailError) {
-      /*
-       * Do not stop the backend if the email
-       * provider has a temporary problem.
-       */
-
       console.error(
         "Email API verification failed:",
         emailError
@@ -279,86 +229,49 @@ async function startServer() {
       );
     }
 
-    /* =================================================
+    /* ================================================
        START BOOKING REMINDER SCHEDULER
-
-       Checks every minute for bookings that
-       start approximately one hour later.
-    ================================================= */
+    ================================================ */
 
     startReminderScheduler();
 
-    console.log(
-      "Booking reminder scheduler started."
-    );
+    console.log("Booking reminder scheduler started.");
 
-    /* =================================================
+    /* ================================================
        START EXPRESS SERVER
+    ================================================ */
 
-       0.0.0.0 allows Render and external clients
-       to access the application.
-    ================================================= */
+    const server = app.listen(PORT, "0.0.0.0", () => {
+      console.log(`Server running on port ${PORT}`);
+      console.log(`Frontend allowed: ${FRONTEND_URL}`);
+      console.log("Public office TV display endpoint registered.");
+      console.log("Booking reminder scheduler is running.");
+    });
 
-    const server =
-      app.listen(
-        PORT,
-        "0.0.0.0",
-        () => {
-          console.log(
-            `Server running on port ${PORT}`
-          );
-
-          console.log(
-            `Frontend allowed: ${FRONTEND_URL}`
-          );
-
-          console.log(
-            "Email and booking reminder services are ready."
-          );
-        }
-      );
-
-    /* =================================================
+    /* ================================================
        GRACEFUL SHUTDOWN
-    ================================================= */
+    ================================================ */
 
-    const shutdown = (
-      signal: string
-    ) => {
+    const shutdown = (signal: string) => {
       console.log(
         `${signal} received. Shutting down server...`
       );
 
-      server.close(
-        () => {
-          console.log(
-            "Server closed."
-          );
-
-          process.exit(0);
-        }
-      );
+      server.close(() => {
+        console.log("Server closed.");
+        process.exit(0);
+      });
     };
 
-    process.on(
-      "SIGINT",
-      () => {
-        shutdown("SIGINT");
-      }
-    );
+    process.on("SIGINT", () => {
+      shutdown("SIGINT");
+    });
 
-    process.on(
-      "SIGTERM",
-      () => {
-        shutdown("SIGTERM");
-      }
-    );
+    process.on("SIGTERM", () => {
+      shutdown("SIGTERM");
+    });
   } catch (error) {
-    console.error(
-      "Failed to start server:",
-      error
-    );
-
+    console.error("Failed to start server:", error);
     process.exit(1);
   }
 }
