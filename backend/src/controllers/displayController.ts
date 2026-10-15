@@ -1,6 +1,6 @@
 import type { Request, Response } from "express";
-import mongoose from "mongoose";
 import { Booking } from "../models/Booking.js";
+import { Room } from "../models/Room.js";
 
 const APP_TIMEZONE = process.env.APP_TIMEZONE || "Asia/Kolkata";
 
@@ -24,15 +24,53 @@ function getTodayDate(): string {
     }
   }
 
-  return values.year + "-" + values.month + "-" + values.day;
+  return `${values.year}-${values.month}-${values.day}`;
 }
 
 /**
- * Public endpoint:
+ * GET /api/display/rooms
+ *
+ * Public, read-only endpoint.
+ * Returns ALL rooms, including rooms with no bookings.
+ * Exposes only basic room information.
+ */
+export async function getDisplayRooms(
+  _req: Request,
+  res: Response
+): Promise<void> {
+  try {
+    const rooms = await Room.find({})
+      .select("_id name")
+      .sort({ name: 1 })
+      .lean();
+
+    const safeRooms = rooms.map((room: any) => ({
+      id: String(room._id),
+      name: room.name || "Unnamed room",
+    }));
+
+    res.setHeader("Cache-Control", "no-store");
+
+    res.status(200).json({
+      success: true,
+      count: safeRooms.length,
+      rooms: safeRooms,
+    });
+  } catch (error) {
+    console.error("Display rooms error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Unable to load rooms.",
+    });
+  }
+}
+
+/**
  * GET /api/display/today
  *
- * No login required.
- * Returns only today's non-cancelled meetings.
+ * Public, read-only endpoint.
+ * Returns today's non-cancelled meetings.
  */
 export async function getTodayDisplayBookings(
   _req: Request,
@@ -41,32 +79,6 @@ export async function getTodayDisplayBookings(
   try {
     const today = getTodayDate();
 
-    // TEMPORARY DIAGNOSTICS
-    console.log("TV display date:", today);
-    console.log(
-      "MongoDB connection state:",
-      mongoose.connection.readyState
-    );
-
-    const totalBookings = await Booking.countDocuments();
-
-    const todayBookingCount = await Booking.countDocuments({
-      date: today,
-    });
-
-    const upcomingBookings = await Booking.find({
-      status: "UPCOMING",
-    })
-      .select("date status")
-      .sort({ date: 1 })
-      .limit(20)
-      .lean();
-
-    console.log("Total bookings in database:", totalBookings);
-    console.log("Bookings dated today:", todayBookingCount);
-    console.log("Upcoming booking dates:", upcomingBookings);
-
-    // Fetch today's bookings, excluding cancelled meetings.
     const bookings = await Booking.find({
       date: today,
       status: { $ne: "CANCELLED" },
@@ -83,19 +95,17 @@ export async function getTodayDisplayBookings(
       .sort({ startTime: 1 })
       .lean();
 
-    const safeBookings = bookings.map((booking: any) => {
-      const startTime = booking.startTime || "";
-      const endTime = booking.endTime || "";
-
-      return {
-        id: String(booking._id),
-        meeting: booking.title || "Untitled meeting",
-        room: booking.room?.name || "Conference Room",
-        time: startTime + " - " + endTime,
-        date: String(booking.date),
-        booker: booking.user?.name || "Employee",
-      };
-    });
+    const safeBookings = bookings.map((booking: any) => ({
+      id: String(booking._id),
+      meeting: booking.title || "Untitled meeting",
+      room: booking.room?.name || "Conference Room",
+      time: `${booking.startTime || ""} - ${
+        booking.endTime || ""
+      }`.trim(),
+      date: String(booking.date),
+      booker: booking.user?.name || "Employee",
+      status: booking.status || "UPCOMING",
+    }));
 
     res.setHeader("Cache-Control", "no-store");
 

@@ -1,4 +1,3 @@
-
 import "dotenv/config";
 
 import express from "express";
@@ -75,11 +74,7 @@ app.use("/api", apiLimiter);
    BODY PARSING
 ===================================================== */
 
-app.use(
-  express.json({
-    limit: "1mb",
-  })
-);
+app.use(express.json({ limit: "1mb" }));
 
 app.use(
   express.urlencoded({
@@ -141,32 +136,28 @@ app.use("/api/admin", adminRoutes);
 app.use("/api/notifications", notificationRoutes);
 
 /* =====================================================
-   OFFICE TV BOOKING DISPLAY
+   PUBLIC OFFICE DISPLAY
 ===================================================== */
 
 /*
- * Public, read-only endpoint:
+ * Public, read-only endpoints:
  *
  * GET /api/display/today
+ * GET /api/display/rooms
  *
- * Shows today's bookings only.
- * No employee or admin login is required.
+ * No employee or admin login required.
  *
- * Visible fields:
- * - Meeting title
- * - Conference room name
- * - Booking date
- * - Start and end time
- * - Employee who booked it
+ * /today returns today's non-cancelled bookings.
+ * /rooms returns all rooms, including rooms without bookings.
  *
- * Meeting descriptions and email addresses
- * are not returned by the display controller.
+ * Keep this route separate from the protected room-management
+ * routes. Do not add authentication middleware here.
  */
 
 app.use("/api/display", displayRoutes);
 
 /* =====================================================
-   404 HANDLER
+   API 404 HANDLER
 ===================================================== */
 
 app.use("/api", (_req, res) => {
@@ -202,21 +193,14 @@ app.use(
 
 async function startServer() {
   try {
-    /* ================================================
-       CONNECT TO DATABASE
-    ================================================ */
-
     await connectDatabase();
 
     console.log("Database connection established.");
 
-    /* ================================================
-       VERIFY EMAIL SERVICE
-    ================================================ */
+    /* EMAIL SERVICE */
 
     try {
       await verifyEmailConnection();
-
       console.log("Email API verification completed.");
     } catch (emailError) {
       console.error(
@@ -229,28 +213,23 @@ async function startServer() {
       );
     }
 
-    /* ================================================
-       START BOOKING REMINDER SCHEDULER
-    ================================================ */
+    /* BOOKING REMINDERS */
 
     startReminderScheduler();
 
     console.log("Booking reminder scheduler started.");
 
-    /* ================================================
-       START EXPRESS SERVER
-    ================================================ */
+    /* EXPRESS SERVER */
 
     const server = app.listen(PORT, "0.0.0.0", () => {
       console.log(`Server running on port ${PORT}`);
       console.log(`Frontend allowed: ${FRONTEND_URL}`);
-      console.log("Public office TV display endpoint registered.");
-      console.log("Booking reminder scheduler is running.");
+      console.log(
+        "Public display routes: /api/display/today and /api/display/rooms"
+      );
     });
 
-    /* ================================================
-       GRACEFUL SHUTDOWN
-    ================================================ */
+    /* GRACEFUL SHUTDOWN */
 
     const shutdown = (signal: string) => {
       console.log(
@@ -263,13 +242,8 @@ async function startServer() {
       });
     };
 
-    process.on("SIGINT", () => {
-      shutdown("SIGINT");
-    });
-
-    process.on("SIGTERM", () => {
-      shutdown("SIGTERM");
-    });
+    process.on("SIGINT", () => shutdown("SIGINT"));
+    process.on("SIGTERM", () => shutdown("SIGTERM"));
   } catch (error) {
     console.error("Failed to start server:", error);
     process.exit(1);
