@@ -1,16 +1,20 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import {
   CalendarDays,
+  CalendarCheck,
   Clock3,
   DoorOpen,
-  CalendarCheck,
+  Expand,
   MapPin,
-  UserRound,
   RefreshCw,
-  Maximize2,
-  Minimize2,
+  UserRound,
   AlertCircle,
 } from "lucide-react";
 
@@ -19,7 +23,7 @@ const API_URL = (
 ).replace(/\/+$/, "");
 
 const REFRESH_INTERVAL = 10_000;
-const TIMEZONE = "Asia/Kolkata";
+const APP_TIMEZONE = "Asia/Kolkata";
 
 type Room = {
   id: string;
@@ -34,34 +38,26 @@ type Booking = {
   date: string;
   booker: string;
   status?: string;
-  roomId?: string;
 };
 
-type ApiRoom = {
-  id?: string;
-  _id?: string;
-  name?: string;
-};
-
-type ApiBooking = {
-  id?: string;
-  _id?: string;
-  meeting?: string;
-  title?: string;
-  room?: string | { id?: string; _id?: string; name?: string };
-  roomId?: string;
-  time?: string;
-  startTime?: string;
-  endTime?: string;
+type BookingResponse = {
+  success?: boolean;
   date?: string;
-  booker?: string;
-  user?: string | { name?: string };
-  status?: string;
+  count?: number;
+  bookings?: Booking[];
+  message?: string;
 };
 
-function getTodayDate(): string {
+type RoomsResponse = {
+  success?: boolean;
+  count?: number;
+  rooms?: Room[];
+  message?: string;
+};
+
+function getIndiaDate(): string {
   const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: TIMEZONE,
+    timeZone: APP_TIMEZONE,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
@@ -78,163 +74,125 @@ function getTodayDate(): string {
   return `${values.year}-${values.month}-${values.day}`;
 }
 
-function formatLongDate(date = new Date()): string {
-  return new Intl.DateTimeFormat("en-IN", {
-    timeZone: TIMEZONE,
+function formatIndiaDate(dateString?: string): string {
+  const value = dateString || getIndiaDate();
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+
+  if (!match) return value;
+
+  const [, year, month, day] = match;
+
+  return new Date(
+    Number(year),
+    Number(month) - 1,
+    Number(day)
+  ).toLocaleDateString("en-IN", {
     weekday: "long",
     day: "2-digit",
     month: "long",
     year: "numeric",
-  }).format(date);
+  });
 }
 
-function formatTime(date = new Date()): string {
-  return new Intl.DateTimeFormat("en-IN", {
-    timeZone: TIMEZONE,
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: true,
-  })
-    .format(date)
-    .toLowerCase();
-}
+function formatDisplayDate(dateString: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateString);
 
-function formatDate(dateString: string): string {
-  if (!dateString) return "-";
+  if (!match) return dateString;
 
-  const match = dateString.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  const [, year, month, day] = match;
 
-  if (match) {
-    return new Date(
-      Number(match[1]),
-      Number(match[2]) - 1,
-      Number(match[3])
-    ).toLocaleDateString("en-IN", {
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-    });
-  }
-
-  const date = new Date(dateString);
-
-  if (Number.isNaN(date.getTime())) return dateString;
-
-  return date.toLocaleDateString("en-IN", {
+  return new Date(
+    Number(year),
+    Number(month) - 1,
+    Number(day)
+  ).toLocaleDateString("en-IN", {
     day: "2-digit",
     month: "short",
     year: "numeric",
   });
 }
 
-function getStatus(booking: Booking): string {
-  if (booking.status === "CANCELLED") return "Cancelled";
-
-  const today = getTodayDate();
-
-  if (booking.date && booking.date < today) return "Completed";
-
-  const endTime = booking.time.split("-")[1]?.trim();
-
-  if (booking.date === today && endTime) {
-    const [hourText, minuteText] = endTime.split(":");
-    const hour = Number(hourText);
-    const minute = Number(minuteText);
-
-    if (
-      Number.isFinite(hour) &&
-      Number.isFinite(minute)
-    ) {
-      const nowParts = new Intl.DateTimeFormat("en-GB", {
-        timeZone: TIMEZONE,
-        hour: "2-digit",
-        minute: "2-digit",
-        hourCycle: "h23",
-      }).format(new Date());
-
-      const [nowHour, nowMinute] = nowParts
-        .split(":")
-        .map(Number);
-
-      if (
-        nowHour * 60 + nowMinute >= hour * 60 + minute
-      ) {
-        return "Completed";
-      }
-    }
-  }
-
-  return "Upcoming";
-}
-
-function normalizeRoom(value: unknown): string {
-  if (typeof value === "string") return value;
-
-  if (value && typeof value === "object" && "name" in value) {
-    const name = (value as { name?: unknown }).name;
-    return typeof name === "string" ? name : "Conference Room";
-  }
-
-  return "Conference Room";
-}
-
-function normalizeBooking(raw: ApiBooking): Booking {
-  const roomValue = raw.room;
-
-  const roomId =
-    raw.roomId ||
-    (roomValue && typeof roomValue === "object"
-      ? roomValue.id || roomValue._id
-      : undefined);
+function getTimeParts() {
+  const now = new Date();
 
   return {
-    id: String(raw.id || raw._id || ""),
-    meeting: raw.meeting || raw.title || "Untitled meeting",
-    room: normalizeRoom(roomValue),
-    roomId,
-    time:
-      raw.time ||
-      `${raw.startTime || ""} - ${raw.endTime || ""}`.trim(),
-    date: raw.date ? String(raw.date).slice(0, 10) : "",
-    booker:
-      raw.booker ||
-      (typeof raw.user === "object" && raw.user
-        ? raw.user.name || "Employee"
-        : typeof raw.user === "string"
-          ? raw.user
-          : "Employee"),
-    status: raw.status || "UPCOMING",
+    time: new Intl.DateTimeFormat("en-IN", {
+      timeZone: APP_TIMEZONE,
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: true,
+    }).format(now),
+    date: new Intl.DateTimeFormat("en-IN", {
+      timeZone: APP_TIMEZONE,
+      weekday: "long",
+      day: "2-digit",
+      month: "long",
+      year: "numeric",
+    }).format(now),
   };
 }
 
-function getArrayPayload<T>(payload: unknown, keys: string[]): T[] {
-  if (Array.isArray(payload)) return payload as T[];
+function getBookingStatus(booking: Booking): string {
+  if (booking.status) {
+    return booking.status.toUpperCase();
+  }
 
-  if (!payload || typeof payload !== "object") return [];
+  const match = /^(\d{1,2}):(\d{2})\s*(AM|PM)?\s*-\s*(\d{1,2}):(\d{2})\s*(AM|PM)?$/i.exec(
+    booking.time.trim()
+  );
 
-  const object = payload as Record<string, unknown>;
+  if (!match) return "UPCOMING";
 
-  for (const key of keys) {
-    if (Array.isArray(object[key])) {
-      return object[key] as T[];
+  const [, startHour, startMinute, startPeriod, endHour, endMinute, endPeriod] =
+    match;
+
+  const toMinutes = (
+    hour: string,
+    minute: string,
+    period?: string
+  ) => {
+    let h = Number(hour);
+    const m = Number(minute);
+
+    if (period) {
+      const normalizedPeriod = period.toUpperCase();
+
+      if (normalizedPeriod === "AM" && h === 12) h = 0;
+      if (normalizedPeriod === "PM" && h !== 12) h += 12;
+    }
+
+    return h * 60 + m;
+  };
+
+  const current = new Date();
+
+  const currentParts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: APP_TIMEZONE,
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(current);
+
+  const currentValues: Record<string, string> = {};
+
+  for (const part of currentParts) {
+    if (part.type !== "literal") {
+      currentValues[part.type] = part.value;
     }
   }
 
-  if (
-    object.data &&
-    typeof object.data === "object"
-  ) {
-    const nested = object.data as Record<string, unknown>;
+  const nowMinutes =
+    Number(currentValues.hour) * 60 +
+    Number(currentValues.minute);
 
-    for (const key of keys) {
-      if (Array.isArray(nested[key])) {
-        return nested[key] as T[];
-      }
-    }
-  }
+  const start = toMinutes(startHour, startMinute, startPeriod);
+  const end = toMinutes(endHour, endMinute, endPeriod);
 
-  return [];
+  if (nowMinutes >= end) return "COMPLETED";
+  if (nowMinutes >= start) return "IN PROGRESS";
+
+  return "UPCOMING";
 }
 
 export default function DisplayPage() {
@@ -242,70 +200,66 @@ export default function DisplayPage() {
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [selectedRoom, setSelectedRoom] = useState("all");
 
-  const [clock, setClock] = useState(() => new Date());
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [clock, setClock] = useState(getTimeParts);
+  const [today, setToday] = useState(getIndiaDate());
+  const [lastUpdated, setLastUpdated] = useState("");
 
-  const [roomsLoading, setRoomsLoading] = useState(true);
-  const [bookingsLoading, setBookingsLoading] = useState(true);
+  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-
+  const [bookingError, setBookingError] = useState("");
   const [roomsError, setRoomsError] = useState("");
-  const [bookingsError, setBookingsError] = useState("");
+
   const [isFullscreen, setIsFullscreen] = useState(false);
 
-  const today = getTodayDate();
-
   const fetchRooms = useCallback(async () => {
-    setRoomsLoading(true);
-    setRoomsError("");
-
     try {
-      // IMPORTANT: use the public display endpoint, not /api/rooms.
+      setRoomsError("");
+
+      // This is the public display endpoint, not /api/rooms.
+      // The normal room-management endpoint may require login.
       const response = await fetch(`${API_URL}/api/display/rooms`, {
         method: "GET",
         cache: "no-store",
       });
 
-      const payload: unknown = await response.json().catch(() => null);
-
       if (!response.ok) {
-        throw new Error(
-          `Unable to load rooms (${response.status}). Check GET /api/display/rooms.`
-        );
+        throw new Error(`Unable to load rooms (${response.status}).`);
       }
 
-      const roomItems = getArrayPayload<ApiRoom>(payload, ["rooms"]);
+      const result = (await response.json()) as RoomsResponse;
 
-      const normalizedRooms = roomItems
-        .map((room) => ({
-          id: String(room.id || room._id || ""),
-          name: room.name || "Unnamed room",
-        }))
-        .filter((room) => room.id.length > 0);
+      if (!result.success || !Array.isArray(result.rooms)) {
+        throw new Error(result.message || "Invalid rooms response.");
+      }
 
-      setRooms(normalizedRooms);
+      const safeRooms = result.rooms
+        .filter(
+          (room) =>
+            typeof room.id === "string" &&
+            typeof room.name === "string"
+        )
+        .sort((a, b) => a.name.localeCompare(b.name));
+
+      setRooms(safeRooms);
     } catch (error) {
       console.error("Display room list error:", error);
+
       setRoomsError(
         error instanceof Error
           ? error.message
           : "Unable to load the complete room list."
       );
-    } finally {
-      setRoomsLoading(false);
     }
   }, []);
 
   const fetchBookings = useCallback(async () => {
-    setBookingsError("");
-
     try {
+      setBookingError("");
+
       const response = await fetch(`${API_URL}/api/display/today`, {
         method: "GET",
         cache: "no-store",
       });
-
-      const payload: unknown = await response.json().catch(() => null);
 
       if (!response.ok) {
         throw new Error(
@@ -313,98 +267,111 @@ export default function DisplayPage() {
         );
       }
 
-      const bookingItems = getArrayPayload<ApiBooking>(payload, [
-        "bookings",
-      ]);
+      const result = (await response.json()) as BookingResponse;
 
-      setBookings(bookingItems.map(normalizeBooking));
-      setLastUpdated(new Date());
+      if (!result.success || !Array.isArray(result.bookings)) {
+        throw new Error(
+          result.message || "Invalid bookings response."
+        );
+      }
+
+      setBookings(result.bookings);
+      setToday(result.date || getIndiaDate());
+      setLastUpdated(
+        new Intl.DateTimeFormat("en-IN", {
+          timeZone: APP_TIMEZONE,
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+          hour12: true,
+        }).format(new Date())
+      );
     } catch (error) {
-      console.error("Display booking fetch failed:", error);
-      setBookingsError(
+      console.error("Display booking list error:", error);
+
+      setBookingError(
         error instanceof Error
           ? error.message
           : "Unable to load today's bookings."
       );
     } finally {
-      setBookingsLoading(false);
+      setLoading(false);
+      setRefreshing(false);
     }
   }, []);
 
   const refreshAll = useCallback(async () => {
     setRefreshing(true);
 
-    try {
-      await Promise.all([fetchRooms(), fetchBookings()]);
-    } finally {
-      setRefreshing(false);
-    }
+    await Promise.allSettled([
+      fetchRooms(),
+      fetchBookings(),
+    ]);
   }, [fetchRooms, fetchBookings]);
 
   useEffect(() => {
-    const clockInterval = window.setInterval(() => {
-      setClock(new Date());
-    }, 1000);
+    void refreshAll();
 
-    void fetchRooms();
-    void fetchBookings();
-
-    const refreshInterval = window.setInterval(() => {
-      void fetchRooms();
-      void fetchBookings();
+    const refreshTimer = window.setInterval(() => {
+      void refreshAll();
     }, REFRESH_INTERVAL);
 
+    const clockTimer = window.setInterval(() => {
+      setClock(getTimeParts());
+      setToday(getIndiaDate());
+    }, 1000);
+
     return () => {
-      window.clearInterval(clockInterval);
-      window.clearInterval(refreshInterval);
+      window.clearInterval(refreshTimer);
+      window.clearInterval(clockTimer);
     };
-  }, [fetchRooms, fetchBookings]);
+  }, [refreshAll]);
 
   useEffect(() => {
-    const updateFullscreen = () => {
+    const handleFullscreenChange = () => {
       setIsFullscreen(Boolean(document.fullscreenElement));
     };
 
-    document.addEventListener("fullscreenchange", updateFullscreen);
+    document.addEventListener(
+      "fullscreenchange",
+      handleFullscreenChange
+    );
 
     return () => {
-      document.removeEventListener("fullscreenchange", updateFullscreen);
+      document.removeEventListener(
+        "fullscreenchange",
+        handleFullscreenChange
+      );
     };
   }, []);
 
-  const visibleBookings = useMemo(() => {
-    const todaysBookings = bookings.filter(
-      (booking) =>
-        booking.date === today &&
-        booking.status !== "CANCELLED"
-    );
-
-    if (selectedRoom === "all") return todaysBookings;
+  const filteredBookings = useMemo(() => {
+    if (selectedRoom === "all") return bookings;
 
     const selected = rooms.find((room) => room.id === selectedRoom);
 
-    if (!selected) return todaysBookings;
+    if (!selected) return bookings;
 
-    return todaysBookings.filter(
+    return bookings.filter(
       (booking) =>
-        booking.roomId === selectedRoom ||
         booking.room.toLowerCase() === selected.name.toLowerCase()
     );
-  }, [bookings, rooms, selectedRoom, today]);
+  }, [bookings, rooms, selectedRoom]);
 
-  const roomCount = useMemo(() => {
+  const roomsBooked = useMemo(() => {
     return new Set(
-      visibleBookings.map((booking) => booking.room.toLowerCase())
+      filteredBookings.map((booking) => booking.room.toLowerCase())
     ).size;
-  }, [visibleBookings]);
+  }, [filteredBookings]);
 
   const upcomingCount = useMemo(() => {
-    return visibleBookings.filter(
-      (booking) => getStatus(booking) === "Upcoming"
-    ).length;
-  }, [visibleBookings]);
+    return filteredBookings.filter((booking) => {
+      const status = getBookingStatus(booking);
+      return status === "UPCOMING" || status === "IN PROGRESS";
+    }).length;
+  }, [filteredBookings]);
 
-  async function toggleFullscreen() {
+  const toggleFullscreen = async () => {
     try {
       if (!document.fullscreenElement) {
         await document.documentElement.requestFullscreen();
@@ -414,102 +381,101 @@ export default function DisplayPage() {
     } catch (error) {
       console.error("Unable to toggle fullscreen:", error);
     }
-  }
-
-  const statusClass = (status: string) => {
-    switch (status) {
-      case "Completed":
-        return "border-green-200 bg-green-50 text-green-700";
-      case "Cancelled":
-        return "border-red-200 bg-red-50 text-red-700";
-      default:
-        return "border-blue-200 bg-blue-50 text-blue-700";
-    }
   };
 
   return (
-    <main className="min-h-screen bg-[#edf4ff] text-[#173574]">
-      {/* Header */}
-      <header className="flex flex-wrap items-center justify-between gap-5 border-b border-blue-100 bg-white px-6 py-3 md:px-10">
-        <div className="flex min-w-0 items-center gap-5">
-          <div className="flex h-14 w-16 shrink-0 items-center justify-center bg-[#142866] px-2 text-center text-[10px] font-extrabold tracking-wide text-white">
-            DANGOTE
-          </div>
-
-          <div className="h-12 w-px shrink-0 bg-blue-100" />
-
-          <div className="min-w-0">
-            <h1 className="text-xl font-extrabold tracking-tight sm:text-2xl lg:text-3xl">
-              Conference Room Bookings
-            </h1>
-            <p className="mt-1 text-sm text-slate-500">
-              Today&apos;s meetings at a glance
-            </p>
-          </div>
-        </div>
-
-        <div className="ml-auto flex items-stretch gap-2">
-          <div className="flex items-center gap-3 rounded-3xl border border-blue-100 bg-[#f5f8ff] px-4 py-3">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-blue-100 text-blue-700">
-              <Clock3 size={24} />
+    <div className="flex min-h-screen flex-col bg-[#edf4ff] text-[#173574]">
+      {/* HEADER */}
+      <header className="shrink-0 border-b border-[#d8e5ff] bg-white">
+        <div className="flex min-h-[112px] flex-wrap items-center justify-between gap-5 px-6 py-4 sm:px-8 lg:px-10">
+          <div className="flex min-w-0 items-center gap-5">
+            {/* Replace this block with your company logo if needed. */}
+            <div className="flex h-[58px] w-[66px] shrink-0 items-center justify-center bg-[#142b70] px-2 text-center text-[11px] font-extrabold tracking-wide text-white">
+              DANGOTE
             </div>
 
-            <div>
-              <p className="whitespace-nowrap text-xl font-bold leading-tight sm:text-2xl">
-                {formatTime(clock)}
-              </p>
-              <p className="mt-1 whitespace-nowrap text-sm text-slate-500">
-                India Standard Time
-              </p>
-              <p className="mt-1 whitespace-nowrap text-xs text-slate-500">
-                {formatLongDate(clock)}
+            <div className="h-14 w-px shrink-0 bg-[#d8e5ff]" />
+
+            <div className="min-w-0">
+              <h1 className="text-xl font-extrabold tracking-tight sm:text-2xl lg:text-[30px]">
+                Conference Room Bookings
+              </h1>
+              <p className="mt-1 text-sm text-[#627895] sm:text-base">
+                Today&apos;s meetings at a glance
               </p>
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={toggleFullscreen}
-            className="flex min-w-[135px] items-center justify-center gap-2 rounded-3xl border border-blue-100 bg-[#edf4ff] px-4 py-3 text-sm font-bold text-[#173574] transition hover:bg-blue-100 sm:min-w-[150px]"
-          >
-            {isFullscreen ? (
-              <Minimize2 size={19} />
-            ) : (
-              <Maximize2 size={19} />
-            )}
-            {isFullscreen ? "Exit full screen" : "Full screen"}
-          </button>
+          <div className="ml-auto flex items-stretch gap-2.5">
+            {/* TIME CARD */}
+            <div className="flex min-w-0 items-center gap-3 rounded-[22px] border border-[#d8e5ff] bg-[#f5f8ff] px-3 py-3 sm:gap-4 sm:px-4">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[#e4efff] text-blue-700 sm:h-12 sm:w-12">
+                <Clock3 size={25} strokeWidth={2.2} />
+              </div>
+
+              <div className="min-w-0">
+                <div className="whitespace-nowrap text-lg font-extrabold leading-tight sm:text-2xl">
+                  {clock.time}
+                </div>
+                <p className="mt-1 whitespace-nowrap text-xs text-[#627895] sm:text-sm">
+                  India Standard Time
+                </p>
+                <p className="mt-1 whitespace-nowrap text-[10px] text-[#627895] sm:text-xs">
+                  {clock.date}
+                </p>
+              </div>
+            </div>
+
+            {/* FULL SCREEN CARD — same overall height as time card */}
+            <button
+              type="button"
+              onClick={toggleFullscreen}
+              className="flex min-h-[88px] shrink-0 items-center justify-center gap-2 rounded-[22px] border border-[#d8e5ff] bg-[#edf4ff] px-3 text-sm font-bold text-[#173574] transition hover:bg-[#e2edff] focus:outline-none focus:ring-2 focus:ring-blue-500 sm:min-w-[140px] sm:px-5 sm:text-base"
+              aria-label={
+                isFullscreen ? "Exit full screen" : "Enter full screen"
+              }
+            >
+              <Expand size={19} />
+              <span>{isFullscreen ? "Exit screen" : "Full screen"}</span>
+            </button>
+          </div>
         </div>
       </header>
 
-      <section className="space-y-7 px-5 py-7 md:px-10">
-        {/* Summary cards */}
-        <div className="grid grid-cols-1 gap-5 md:grid-cols-3">
+      {/* MAIN CONTENT
+          flex-1 makes the content area fill the available viewport height.
+          This keeps the footer at the bottom when there are few bookings. */}
+      <main className="flex w-full flex-1 flex-col gap-6 px-5 py-6 sm:px-7 lg:px-10 lg:py-7">
+        {/* SUMMARY CARDS */}
+        <section className="grid shrink-0 grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
           <SummaryCard
             icon={<CalendarDays size={27} />}
             label="Today's Meetings"
-            value={visibleBookings.length}
-            iconClass="bg-blue-50 text-blue-600"
+            value={bookings.length}
+            iconClass="bg-[#eef5ff] text-blue-600"
           />
+
           <SummaryCard
             icon={<DoorOpen size={27} />}
             label="Rooms Booked"
-            value={roomCount}
-            iconClass="bg-emerald-50 text-emerald-600"
+            value={roomsBooked}
+            iconClass="bg-[#eafbf4] text-emerald-600"
           />
+
           <SummaryCard
             icon={<CalendarCheck size={27} />}
             label="Upcoming Meetings"
             value={upcomingCount}
-            iconClass="bg-violet-50 text-violet-600"
+            iconClass="bg-[#f4f0ff] text-purple-600"
           />
-        </div>
+        </section>
 
-        {/* Schedule */}
-        <section className="overflow-hidden rounded-2xl border border-blue-100 bg-white shadow-sm">
-          <div className="flex flex-wrap items-center justify-between gap-4 border-b border-blue-100 px-5 py-5 md:px-7">
+        {/* SCHEDULE CARD */}
+        <section className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-[#d8e5ff] bg-white shadow-sm">
+          {/* SCHEDULE HEADER */}
+          <div className="flex shrink-0 flex-col justify-between gap-4 border-b border-[#e0eaff] px-5 py-5 sm:px-7 xl:flex-row xl:items-center">
             <div className="flex items-center gap-4">
-              <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-[#193d7e] text-white shadow-sm">
+              <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-[#193d80] text-white shadow-sm">
                 <CalendarDays size={27} />
               </div>
 
@@ -517,26 +483,26 @@ export default function DisplayPage() {
                 <h2 className="text-xl font-bold sm:text-2xl">
                   Today&apos;s Schedule
                 </h2>
-                <p className="mt-1 text-sm text-slate-500 sm:text-base">
-                  {formatLongDate(clock)}
+                <p className="mt-1 text-sm text-[#627895] sm:text-base">
+                  {formatIndiaDate(today)}
                 </p>
               </div>
             </div>
 
             <div className="flex flex-wrap items-center gap-3">
-              <span className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-4 py-2 text-xs font-semibold text-emerald-700">
+              <div className="inline-flex items-center gap-2 rounded-full bg-[#eafbf4] px-4 py-2 text-xs font-semibold text-emerald-700 sm:text-sm">
                 <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
                 Live Schedule
-              </span>
+              </div>
 
-              <span className="inline-flex items-center gap-2 text-sm text-slate-500">
+              <div className="flex items-center gap-2 text-xs text-[#627895] sm:text-sm">
                 <RefreshCw size={16} />
-                Auto-refreshes every 10 seconds
-              </span>
+                <span>Auto-refreshes every 10 seconds</span>
+              </div>
 
               <label
                 htmlFor="room-filter"
-                className="text-sm text-slate-600"
+                className="text-sm text-[#526984]"
               >
                 Room:
               </label>
@@ -545,9 +511,10 @@ export default function DisplayPage() {
                 id="room-filter"
                 value={selectedRoom}
                 onChange={(event) => setSelectedRoom(event.target.value)}
-                className="min-w-[145px] rounded-lg border border-blue-200 bg-white px-3 py-2.5 text-sm font-semibold text-[#173574] outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                className="min-w-[145px] rounded-lg border border-[#d4e2ff] bg-white px-3 py-2.5 text-sm font-semibold text-[#173574] outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
               >
                 <option value="all">All rooms</option>
+
                 {rooms.map((room) => (
                   <option key={room.id} value={room.id}>
                     {room.name}
@@ -559,7 +526,7 @@ export default function DisplayPage() {
                 type="button"
                 onClick={() => void refreshAll()}
                 disabled={refreshing}
-                className="inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-[#f5f8ff] px-3 py-2.5 text-sm font-semibold text-[#173574] transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
+                className="inline-flex items-center justify-center gap-2 rounded-lg border border-[#d4e2ff] bg-[#f5f8ff] px-4 py-2.5 text-sm font-semibold text-[#173574] transition hover:bg-[#e9f1ff] disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <RefreshCw
                   size={16}
@@ -570,105 +537,112 @@ export default function DisplayPage() {
             </div>
           </div>
 
-          <div className="space-y-4 p-4 md:p-6">
+          {/* SCHEDULE BODY
+              flex-1 allows the schedule panel to fill empty vertical space. */}
+          <div className="flex flex-1 flex-col p-4 sm:p-6">
             {roomsError && (
-              <div
-                role="alert"
-                className="flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
-              >
+              <div className="mb-4 flex shrink-0 items-start gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
                 <AlertCircle size={19} className="mt-0.5 shrink-0" />
                 <div>
                   <p className="font-semibold">
                     Unable to load the complete room list.
                   </p>
-                  <p className="mt-1">{roomsError}</p>
                   <p className="mt-1">
-                    Confirm that GET /api/display/rooms is registered as a
-                    public route in the backend.
+                    {roomsError} Ensure the backend exposes the public
+                    GET /api/display/rooms endpoint.
                   </p>
                 </div>
               </div>
             )}
 
-            {bookingsError && (
-              <div
-                role="alert"
-                className="flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
-              >
+            {bookingError && (
+              <div className="mb-4 flex shrink-0 items-start gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
                 <AlertCircle size={19} className="mt-0.5 shrink-0" />
-                <p>{bookingsError}</p>
+                <div>
+                  <p className="font-semibold">
+                    Unable to load today&apos;s bookings.
+                  </p>
+                  <p className="mt-1">{bookingError}</p>
+                </div>
               </div>
             )}
 
-            {roomsLoading && (
-              <p className="text-sm text-slate-500">
-                Loading conference rooms…
-              </p>
-            )}
-
-            <div className="overflow-x-auto">
+            {/* TABLE — horizontal scrolling on smaller screens */}
+            <div className="w-full flex-1 overflow-x-auto">
               <table className="w-full min-w-[900px] border-collapse text-left">
                 <thead>
-                  <tr className="bg-[#eaf1ff] text-xs uppercase tracking-wide text-slate-600">
-                    <th className="rounded-l-xl px-4 py-4 font-bold">Time</th>
+                  <tr className="bg-[#eaf1ff] text-xs uppercase tracking-wide text-[#415978]">
+                    <th className="rounded-l-xl px-4 py-4 font-bold">
+                      Time
+                    </th>
                     <th className="px-4 py-4 font-bold">Meeting</th>
                     <th className="px-4 py-4 font-bold">Room</th>
                     <th className="px-4 py-4 font-bold">Booker</th>
                     <th className="px-4 py-4 font-bold">Date</th>
-                    <th className="rounded-r-xl px-4 py-4 font-bold">Status</th>
+                    <th className="rounded-r-xl px-4 py-4 font-bold">
+                      Status
+                    </th>
                   </tr>
                 </thead>
 
                 <tbody>
-                  {bookingsLoading ? (
+                  {loading ? (
                     <tr>
                       <td
                         colSpan={6}
-                        className="px-4 py-12 text-center text-sm text-slate-500"
+                        className="px-4 py-12 text-center text-sm text-[#627895]"
                       >
-                        Loading today&apos;s meetings…
+                        Loading today&apos;s bookings...
                       </td>
                     </tr>
-                  ) : visibleBookings.length === 0 ? (
+                  ) : filteredBookings.length === 0 ? (
                     <tr>
-                      <td
-                        colSpan={6}
-                        className="px-4 py-14 text-center text-slate-500"
-                      >
-                        <CalendarDays
-                          size={34}
-                          className="mx-auto mb-3 text-slate-300"
-                        />
-                        <p className="font-semibold text-slate-700">
-                          No meetings scheduled
-                        </p>
-                        <p className="mt-1 text-sm">
-                          {selectedRoom === "all"
-                            ? "There are no bookings for today."
-                            : `There are no bookings for ${rooms.find((room) => room.id === selectedRoom)?.name || "this room"} today.`}
-                        </p>
+                      <td colSpan={6} className="py-10">
+                        <div className="flex min-h-[140px] flex-col items-center justify-center text-center">
+                          <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-[#eef5ff] text-blue-600">
+                            <CalendarDays size={25} />
+                          </div>
+
+                          <p className="font-semibold text-[#173574]">
+                            No meetings scheduled
+                          </p>
+
+                          <p className="mt-1 text-sm text-[#7185a1]">
+                            {selectedRoom === "all"
+                              ? "There are no bookings for today."
+                              : `There are no bookings for ${
+                                  rooms.find(
+                                    (room) => room.id === selectedRoom
+                                  )?.name || "this room"
+                                } today.`}
+                          </p>
+                        </div>
                       </td>
                     </tr>
                   ) : (
-                    visibleBookings.map((booking) => {
-                      const status = getStatus(booking);
+                    filteredBookings.map((booking) => {
+                      const status = getBookingStatus(booking);
 
                       return (
                         <tr
-                          key={booking.id || `${booking.meeting}-${booking.time}`}
-                          className="border-b border-blue-100 last:border-b-0 hover:bg-blue-50/40"
+                          key={booking.id}
+                          className="border-b border-[#e0eaff] last:border-b-0"
                         >
                           <td className="px-4 py-5">
-                            <div className="flex items-center gap-3 whitespace-nowrap font-semibold">
-                              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
+                            <div className="flex items-center gap-3 whitespace-nowrap">
+                              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#edf4ff] text-blue-600">
                                 <Clock3 size={21} />
                               </span>
-                              {booking.time || "-"}
+                              <span className="font-semibold text-[#173574]">
+                                {booking.time || "Time not specified"}
+                              </span>
                             </div>
                           </td>
 
-                          <td className="px-4 py-5 font-semibold">
-                            {booking.meeting}
+                          <td className="px-4 py-5">
+                            <span className="font-semibold text-[#173574]">
+                              {booking.meeting || "Untitled meeting"}
+                            </span>
                           </td>
 
                           <td className="px-4 py-5">
@@ -677,8 +651,8 @@ export default function DisplayPage() {
                                 size={19}
                                 className="shrink-0 text-blue-600"
                               />
-                              <span className="font-semibold">
-                                {booking.room}
+                              <span className="font-semibold text-[#173574]">
+                                {booking.room || "Conference Room"}
                               </span>
                             </div>
                           </td>
@@ -689,23 +663,18 @@ export default function DisplayPage() {
                                 size={19}
                                 className="shrink-0 text-blue-600"
                               />
-                              <span className="font-semibold">
-                                {booking.booker}
+                              <span className="font-semibold text-[#173574]">
+                                {booking.booker || "Employee"}
                               </span>
                             </div>
                           </td>
 
-                          <td className="whitespace-nowrap px-4 py-5 text-slate-600">
-                            {formatDate(booking.date)}
+                          <td className="whitespace-nowrap px-4 py-5 text-sm text-[#526984]">
+                            {formatDisplayDate(booking.date)}
                           </td>
 
                           <td className="px-4 py-5">
-                            <span
-                              className={`inline-flex whitespace-nowrap items-center gap-2 rounded-full border px-3 py-2 text-xs font-semibold ${statusClass(status)}`}
-                            >
-                              <span className="h-2 w-2 rounded-full bg-current" />
-                              {status}
-                            </span>
+                            <StatusBadge status={status} />
                           </td>
                         </tr>
                       );
@@ -715,27 +684,32 @@ export default function DisplayPage() {
               </table>
             </div>
 
-            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-blue-100 pt-4 text-xs text-slate-500">
+            {/* SCHEDULE FOOTER */}
+            <div className="mt-auto flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-[#e0eaff] pt-4 text-xs text-[#627895]">
               <span>
-                {visibleBookings.length} meeting
-                {visibleBookings.length === 1 ? "" : "s"} displayed
+                {filteredBookings.length}{" "}
+                {filteredBookings.length === 1 ? "meeting" : "meetings"}{" "}
+                displayed
               </span>
 
               <span>
                 {lastUpdated
-                  ? `Last updated at ${formatTime(lastUpdated)} IST`
-                  : "Waiting for first refresh…"}
+                  ? `Last updated at ${lastUpdated} IST`
+                  : "Waiting for first update"}
               </span>
             </div>
           </div>
         </section>
-      </section>
+      </main>
 
-      <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-blue-100 bg-white/80 px-6 py-5 text-sm text-slate-500 md:px-10">
-        <span>Conference Room Booking System · Dangote</span>
-        <span>All times shown in India Standard Time (IST)</span>
+      {/* FOOTER — mt-auto and main flex-1 keep it at the bottom on short pages */}
+      <footer className="mt-auto shrink-0 border-t border-[#d8e5ff] bg-white/80">
+        <div className="flex min-h-[62px] flex-wrap items-center justify-between gap-2 px-6 py-4 text-xs text-[#627895] sm:px-8 sm:text-sm lg:px-10">
+          <span>Conference Room Booking System · Dangote</span>
+          <span>All times shown in India Standard Time (IST)</span>
+        </div>
       </footer>
-    </main>
+    </div>
   );
 }
 
@@ -751,7 +725,7 @@ function SummaryCard({
   iconClass: string;
 }) {
   return (
-    <div className="flex min-h-[145px] items-center gap-5 rounded-2xl border border-blue-100 bg-white px-6 py-6 shadow-sm">
+    <div className="flex min-h-[145px] items-center gap-5 rounded-2xl border border-[#dce7fb] bg-white px-6 py-6 shadow-sm sm:px-7">
       <div
         className={`flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl ${iconClass}`}
       >
@@ -759,11 +733,43 @@ function SummaryCard({
       </div>
 
       <div>
-        <p className="text-sm text-slate-500">{label}</p>
+        <p className="text-sm text-[#627895] sm:text-base">{label}</p>
         <p className="mt-1 text-4xl font-extrabold leading-none text-[#173574]">
           {value}
         </p>
       </div>
     </div>
+  );
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const styles: Record<string, string> = {
+    UPCOMING: "border-blue-200 bg-blue-50 text-blue-700",
+    "IN PROGRESS": "border-emerald-200 bg-emerald-50 text-emerald-700",
+    COMPLETED: "border-slate-200 bg-slate-100 text-slate-600",
+    CANCELLED: "border-red-200 bg-red-50 text-red-700",
+  };
+
+  const dotStyles: Record<string, string> = {
+    UPCOMING: "bg-blue-600",
+    "IN PROGRESS": "bg-emerald-500",
+    COMPLETED: "bg-slate-500",
+    CANCELLED: "bg-red-500",
+  };
+
+  const normalized = status.toUpperCase();
+  const style =
+    styles[normalized] || "border-blue-200 bg-blue-50 text-blue-700";
+  const dotStyle = dotStyles[normalized] || "bg-blue-600";
+
+  return (
+    <span
+      className={`inline-flex items-center gap-2 whitespace-nowrap rounded-full border px-3 py-2 text-xs font-semibold ${style}`}
+    >
+      <span className={`h-2 w-2 rounded-full ${dotStyle}`} />
+      {normalized === "IN PROGRESS"
+        ? "In Progress"
+        : normalized.charAt(0) + normalized.slice(1).toLowerCase()}
+    </span>
   );
 }
