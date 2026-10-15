@@ -705,7 +705,7 @@ export default function DisplayPage() {
       {/* FOOTER — mt-auto and main flex-1 keep it at the bottom on short pages */}
       <footer className="mt-auto shrink-0 border-t border-[#d8e5ff] bg-white/80">
         <div className="flex min-h-[62px] flex-wrap items-center justify-between gap-2 px-6 py-4 text-xs text-[#627895] sm:px-8 sm:text-sm lg:px-10">
-          <span>Conference Room Booking System · Dangote</span>
+          <span>© Dangote Project Office. All rights reserved</span>
           <span>All times shown in India Standard Time (IST)</span>
         </div>
       </footer>
