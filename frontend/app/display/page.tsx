@@ -1,8 +1,6 @@
-
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { ReactNode } from "react";
 import {
   CalendarDays,
   Clock3,
@@ -10,11 +8,11 @@ import {
   Maximize2,
   Minimize2,
   RefreshCw,
-  MapPin,
   UserRound,
   CalendarCheck,
   Building2,
   AlertCircle,
+  MapPin,
 } from "lucide-react";
 
 type DisplayBooking = {
@@ -24,6 +22,11 @@ type DisplayBooking = {
   time: string;
   date: string;
   booker: string;
+};
+
+type Room = {
+  id: string;
+  name: string;
 };
 
 type DisplayResponse = {
@@ -123,13 +126,78 @@ function getBookingStatus(booking: DisplayBooking): MeetingStatus {
   return "In Progress";
 }
 
+/**
+ * Supports common room API responses:
+ * { rooms: [...] }
+ * { data: [...] }
+ * { data: { rooms: [...] } }
+ * [...]
+ */
+function normalizeRooms(payload: unknown): Room[] {
+  let rawRooms: unknown[] = [];
+
+  if (Array.isArray(payload)) {
+    rawRooms = payload;
+  } else if (payload && typeof payload === "object") {
+    const response = payload as Record<string, unknown>;
+
+    if (Array.isArray(response.rooms)) {
+      rawRooms = response.rooms;
+    } else if (Array.isArray(response.data)) {
+      rawRooms = response.data;
+    } else if (
+      response.data &&
+      typeof response.data === "object" &&
+      Array.isArray((response.data as Record<string, unknown>).rooms)
+    ) {
+      rawRooms = (response.data as Record<string, unknown>).rooms as unknown[];
+    }
+  }
+
+  const uniqueRooms = new Map<string, Room>();
+
+  for (const item of rawRooms) {
+    if (!item || typeof item !== "object") continue;
+
+    const room = item as Record<string, unknown>;
+    const name =
+      typeof room.name === "string"
+        ? room.name.trim()
+        : typeof room.roomName === "string"
+          ? room.roomName.trim()
+          : "";
+
+    const id = String(room._id ?? room.id ?? name).trim();
+
+    // Ignore inactive rooms if the API provides an active flag.
+    if (
+      room.isActive === false ||
+      room.active === false ||
+      room.status === "INACTIVE" ||
+      room.status === "Inactive"
+    ) {
+      continue;
+    }
+
+    if (name) {
+      uniqueRooms.set(name.toLowerCase(), { id, name });
+    }
+  }
+
+  return Array.from(uniqueRooms.values()).sort((a, b) =>
+    a.name.localeCompare(b.name)
+  );
+}
+
 export default function DisplayPage() {
   const [data, setData] = useState<DisplayResponse | null>(null);
+  const [rooms, setRooms] = useState<Room[]>([]);
   const [clock, setClock] = useState("");
   const [lastUpdated, setLastUpdated] = useState("");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
+  const [roomsError, setRoomsError] = useState("");
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [selectedRoom, setSelectedRoom] = useState("ALL");
 
@@ -165,23 +233,57 @@ export default function DisplayPage() {
     }
   }, []);
 
+  // Load every active room independently of today's bookings.
+  const fetchRooms = useCallback(async () => {
+    try {
+      const response = await fetch(`${API_URL}/api/rooms`, {
+        cache: "no-store",
+      });
+
+      if (!response.ok) {
+        throw new Error(`Unable to load rooms (${response.status}).`);
+      }
+
+      const result: unknown = await response.json();
+      const roomList = normalizeRooms(result);
+
+      setRooms(roomList);
+      setRoomsError("");
+
+      // If the selected room was removed or deactivated, reset the filter.
+      setSelectedRoom((current) => {
+        if (current === "ALL") return current;
+
+        return roomList.some((room) => room.name === current)
+          ? current
+          : "ALL";
+      });
+    } catch (err) {
+      console.error("Room list fetch failed:", err);
+      setRoomsError(
+        "Unable to load the complete room list. Please check the rooms API."
+      );
+    }
+  }, []);
+
   useEffect(() => {
     const updateClock = () => setClock(getIndiaTime());
 
     updateClock();
     void fetchBookings();
+    void fetchRooms();
 
     const clockInterval = window.setInterval(updateClock, 1000);
-    const bookingInterval = window.setInterval(
-      () => void fetchBookings(),
-      10000
-    );
+    const bookingInterval = window.setInterval(() => {
+      void fetchBookings();
+      void fetchRooms();
+    }, 10000);
 
     return () => {
       window.clearInterval(clockInterval);
       window.clearInterval(bookingInterval);
     };
-  }, [fetchBookings]);
+  }, [fetchBookings, fetchRooms]);
 
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -191,49 +293,55 @@ export default function DisplayPage() {
     document.addEventListener("fullscreenchange", handleFullscreenChange);
 
     return () => {
-      document.removeEventListener(
-        "fullscreenchange",
-        handleFullscreenChange
-      );
+      document.removeEventListener("fullscreenchange", handleFullscreenChange);
     };
   }, []);
 
   const bookings = data?.bookings ?? [];
 
-  const roomOptions = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          bookings
-            .map((booking) => booking.room?.trim())
-            .filter((room): room is string => Boolean(room))
-        )
-      ).sort((a, b) => a.localeCompare(b)),
-    [bookings]
-  );
-
-  const isSpecificRoomSelected = selectedRoom !== "ALL";
-
   const selectedRoomBookings = useMemo(
     () =>
       selectedRoom === "ALL"
         ? bookings
-        : bookings.filter((booking) => booking.room.trim() === selectedRoom),
+        : bookings.filter(
+            (booking) =>
+              booking.room.trim().toLowerCase() ===
+              selectedRoom.trim().toLowerCase()
+          ),
     [bookings, selectedRoom]
   );
 
+  // Only upcoming and in-progress meetings appear in the table.
   const filteredBookings = useMemo(
     () =>
-      selectedRoomBookings.filter((booking) => {
-        const status = getBookingStatus(booking);
-        return status === "Upcoming" || status === "In Progress";
-      }),
+      selectedRoomBookings
+        .filter((booking) => {
+          const status = getBookingStatus(booking);
+          return status === "Upcoming" || status === "In Progress";
+        })
+        .sort((a, b) => {
+          if (a.date !== b.date) return a.date.localeCompare(b.date);
+
+          const aStart = a.time.split("-")[0]?.trim() ?? "";
+          const bStart = b.time.split("-")[0]?.trim() ?? "";
+
+          return aStart.localeCompare(bStart);
+        }),
     [selectedRoomBookings, clock]
   );
 
   const roomsBooked = useMemo(
-    () => new Set(bookings.map((booking) => booking.room)).size,
-    [bookings]
+    () =>
+      new Set(
+        bookings
+          .filter((booking) => {
+            const status = getBookingStatus(booking);
+            return status === "Upcoming" || status === "In Progress";
+          })
+          .map((booking) => booking.room.trim().toLowerCase())
+          .filter(Boolean)
+      ).size,
+    [bookings, clock]
   );
 
   const upcomingMeetings = useMemo(
@@ -266,10 +374,8 @@ export default function DisplayPage() {
 
   return (
     <main className="min-h-screen bg-[#edf4ff] text-[#132f70]">
-      {/* Header */}
       <header className="border-b border-[#dce7f8] bg-white px-5 py-3 sm:px-8 lg:px-10">
         <div className="mx-auto flex max-w-[1800px] flex-col justify-between gap-4 lg:flex-row lg:items-center">
-          {/* Dangote logo and title */}
           <div className="flex items-center gap-4 sm:gap-6">
             <div className="flex h-12 w-24 shrink-0 items-center justify-center border-r border-[#dce7f8] pr-3 sm:h-14 sm:w-32">
               <img
@@ -302,9 +408,7 @@ export default function DisplayPage() {
             </div>
           </div>
 
-          {/* Smaller time and fullscreen cards */}
           <div className="flex flex-wrap items-stretch gap-2.5">
-            {/* Time card */}
             <div className="flex h-[88px] items-center gap-3 rounded-[20px] border border-[#e0eaff] bg-[#f5f8ff] px-4 sm:h-[96px] sm:gap-3.5 sm:px-5">
               <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#e5efff] text-blue-700 sm:h-12 sm:w-12">
                 <Clock3 size={25} />
@@ -323,13 +427,10 @@ export default function DisplayPage() {
               </div>
             </div>
 
-            {/* Full screen card: exactly the same dimensions */}
             <button
               type="button"
               onClick={toggleFullscreen}
-              aria-label={
-                isFullscreen ? "Exit fullscreen" : "Enter fullscreen"
-              }
+              aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
               className="flex h-[88px] items-center justify-center gap-2 rounded-[20px] border border-[#d9e6ff] bg-[#edf4ff] px-4 text-sm font-bold text-[#143477] transition hover:bg-[#dce9ff] focus:outline-none focus:ring-2 focus:ring-blue-400 sm:h-[96px] sm:px-5 sm:text-base"
             >
               {isFullscreen ? (
@@ -345,22 +446,20 @@ export default function DisplayPage() {
         </div>
       </header>
 
-      {/* Dashboard */}
       <section className="mx-auto max-w-[1800px] space-y-7 px-5 py-7 sm:px-8 sm:py-9 lg:px-10">
-        {/* Summary cards */}
         <div
           className={`grid grid-cols-1 gap-5 ${
-            isSpecificRoomSelected ? "md:grid-cols-2" : "md:grid-cols-3"
+            selectedRoom !== "ALL" ? "md:grid-cols-2" : "md:grid-cols-3"
           }`}
         >
           <SummaryCard
             icon={<CalendarDays size={29} />}
-            label="Today's Meetings"
+            label={selectedRoom === "ALL" ? "Today's Meetings" : "Room Meetings"}
             value={loading ? "—" : selectedRoomBookings.length}
             iconClass="bg-blue-50 text-blue-700"
           />
 
-          {!isSpecificRoomSelected && (
+          {selectedRoom === "ALL" && (
             <SummaryCard
               icon={<DoorOpen size={29} />}
               label="Rooms Booked"
@@ -371,23 +470,18 @@ export default function DisplayPage() {
 
           <SummaryCard
             icon={<CalendarCheck size={29} />}
-            label={
-              isSpecificRoomSelected
-                ? "Upcoming Bookings"
-                : "Upcoming Meetings"
-            }
+            label={selectedRoom === "ALL" ? "Upcoming Meetings" : "Upcoming Bookings"}
             value={
               loading
                 ? "—"
-                : isSpecificRoomSelected
-                  ? selectedRoomUpcoming
-                  : upcomingMeetings
+                : selectedRoom === "ALL"
+                  ? upcomingMeetings
+                  : selectedRoomUpcoming
             }
             iconClass="bg-violet-50 text-violet-600"
           />
         </div>
 
-        {/* Live schedule */}
         <section className="overflow-hidden rounded-2xl border border-[#dfe9f8] bg-white shadow-[0_4px_12px_rgba(22,54,112,0.07)]">
           <div className="flex flex-col justify-between gap-4 border-b border-[#e5edf9] px-5 py-6 sm:px-7 lg:flex-row lg:items-center">
             <div className="flex items-center gap-4">
@@ -436,9 +530,10 @@ export default function DisplayPage() {
                   className="min-w-36 rounded-lg border border-[#d8e5fa] bg-white px-3 py-2.5 text-sm font-semibold text-[#143477] outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                 >
                   <option value="ALL">All rooms</option>
-                  {roomOptions.map((room) => (
-                    <option key={room} value={room}>
-                      {room}
+
+                  {rooms.map((room) => (
+                    <option key={room.id || room.name} value={room.name}>
+                      {room.name}
                     </option>
                   ))}
                 </select>
@@ -446,7 +541,10 @@ export default function DisplayPage() {
 
               <button
                 type="button"
-                onClick={() => void fetchBookings(true)}
+                onClick={() => {
+                  void fetchBookings(true);
+                  void fetchRooms();
+                }}
                 disabled={refreshing}
                 className="inline-flex items-center gap-2 rounded-lg border border-[#d8e5fa] px-3 py-2 text-sm font-semibold text-[#143477] transition hover:bg-[#f2f6ff] disabled:opacity-50"
               >
@@ -459,10 +557,13 @@ export default function DisplayPage() {
             </div>
           </div>
 
-          {error && (
+          {(error || roomsError) && (
             <div className="mx-5 mt-5 flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 sm:mx-7">
               <AlertCircle size={20} className="mt-0.5 shrink-0" />
-              <p>{error}</p>
+              <div>
+                {error && <p>{error}</p>}
+                {roomsError && <p>{roomsError}</p>}
+              </div>
             </div>
           )}
 
@@ -488,125 +589,97 @@ export default function DisplayPage() {
               <p className="mt-2 max-w-md text-sm leading-6 text-slate-500">
                 {selectedRoom === "ALL"
                   ? "There are no upcoming or in-progress meetings scheduled for today."
-                  : "Try another room or select All rooms to view other active meetings."}
+                  : "This room has no upcoming or in-progress meetings today. Select another room to view its schedule."}
               </p>
             </div>
           ) : (
-            <>
-              <div className="hidden overflow-x-auto p-6 lg:block">
-                <table className="w-full min-w-[1000px] border-separate border-spacing-0 text-left">
-                  <thead>
-                    <tr className="bg-[#eaf2ff] text-xs font-bold uppercase tracking-wider text-slate-600">
-                      {["Time", "Meeting", "Room", "Booker", "Date", "Status"].map(
-                        (heading) => (
-                          <th
-                            key={heading}
-                            className="border-y border-[#d8e6ff] px-5 py-4 first:rounded-l-xl last:rounded-r-xl"
-                          >
-                            {heading}
-                          </th>
-                        )
-                      )}
-                    </tr>
-                  </thead>
-
-                  <tbody>
-                    {filteredBookings.map((booking) => {
-                      const status = getBookingStatus(booking);
-
-                      return (
-                        <tr
-                          key={booking.id}
-                          className="group transition hover:bg-[#f8faff]"
+            <div className="overflow-x-auto p-4 sm:p-6">
+              <table className="w-full min-w-[1000px] border-separate border-spacing-0 text-left">
+                <thead>
+                  <tr className="bg-[#eaf2ff] text-xs font-bold uppercase tracking-wider text-slate-600">
+                    {["Time", "Meeting", "Room", "Booker", "Date", "Status"].map(
+                      (heading) => (
+                        <th
+                          key={heading}
+                          className="border-y border-[#dce8ff] px-4 py-4 first:rounded-l-xl first:border-l last:rounded-r-xl last:border-r"
                         >
-                          <td className="border-b border-[#e5edf9] px-5 py-6">
-                            <div className="flex items-center gap-3 whitespace-nowrap">
-                              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#eaf2ff] text-blue-700">
-                                <Clock3 size={21} />
-                              </span>
-                              <span className="font-bold text-[#142f70]">
-                                {booking.time}
-                              </span>
-                            </div>
-                          </td>
+                          {heading}
+                        </th>
+                      )
+                    )}
+                  </tr>
+                </thead>
 
-                          <td className="border-b border-[#e5edf9] px-5 py-6">
-                            <span className="font-bold text-[#142f70]">
-                              {booking.meeting}
+                <tbody>
+                  {filteredBookings.map((booking) => {
+                    const status = getBookingStatus(booking);
+
+                    return (
+                      <tr
+                        key={booking.id}
+                        className="transition hover:bg-[#f7faff]"
+                      >
+                        <td className="border-b border-[#e5edf9] px-4 py-6">
+                          <div className="flex items-center gap-3 whitespace-nowrap font-semibold">
+                            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#eaf2ff] text-blue-600">
+                              <Clock3 size={21} />
                             </span>
-                          </td>
+                            {booking.time}
+                          </div>
+                        </td>
 
-                          <td className="border-b border-[#e5edf9] px-5 py-6">
-                            <div className="flex items-center gap-3">
-                              <MapPin size={21} className="shrink-0 text-blue-600" />
-                              <div>
-                                <p className="font-semibold text-[#142f70]">
-                                  {booking.room}
-                                </p>
-                                <p className="mt-1 text-xs text-slate-500">
-                                  Conference room
-                                </p>
-                              </div>
+                        <td className="max-w-[360px] border-b border-[#e5edf9] px-4 py-6 font-semibold">
+                          {booking.meeting || "Untitled meeting"}
+                        </td>
+
+                        <td className="border-b border-[#e5edf9] px-4 py-6">
+                          <div className="flex items-center gap-3">
+                            <MapPin size={20} className="shrink-0 text-blue-600" />
+                            <div>
+                              <p className="font-bold uppercase">
+                                {booking.room}
+                              </p>
+                              <p className="mt-1 text-xs text-slate-500">
+                                Conference room
+                              </p>
                             </div>
-                          </td>
+                          </div>
+                        </td>
 
-                          <td className="border-b border-[#e5edf9] px-5 py-6">
-                            <div className="flex items-center gap-3 whitespace-nowrap">
-                              <UserRound size={21} className="text-blue-600" />
-                              <span className="font-semibold text-[#142f70]">
-                                {booking.booker}
-                              </span>
-                            </div>
-                          </td>
+                        <td className="border-b border-[#e5edf9] px-4 py-6">
+                          <div className="flex items-center gap-3 whitespace-nowrap font-semibold">
+                            <UserRound
+                              size={20}
+                              className="shrink-0 text-blue-600"
+                            />
+                            {booking.booker || "Employee"}
+                          </div>
+                        </td>
 
-                          <td className="border-b border-[#e5edf9] px-5 py-6">
-                            <div className="flex items-center gap-2 whitespace-nowrap text-slate-600">
-                              <CalendarDays size={19} className="text-blue-600" />
-                              {booking.date}
-                            </div>
-                          </td>
+                        <td className="border-b border-[#e5edf9] px-4 py-6 whitespace-nowrap text-slate-600">
+                          <span className="flex items-center gap-2">
+                            <CalendarDays size={19} className="text-blue-600" />
+                            {booking.date}
+                          </span>
+                        </td>
 
-                          <td className="border-b border-[#e5edf9] px-5 py-6">
-                            <StatusBadge status={status} />
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="space-y-4 p-4 lg:hidden sm:p-6">
-                {filteredBookings.map((booking) => (
-                  <article
-                    key={booking.id}
-                    className="rounded-xl border border-[#dce8fb] bg-[#f9fbff] p-4 sm:p-5"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <h3 className="text-base font-bold text-[#142f70] sm:text-lg">
-                        {booking.meeting}
-                      </h3>
-                      <StatusBadge status={getBookingStatus(booking)} />
-                    </div>
-
-                    <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
-                      <Detail icon={<Clock3 size={18} />} label="TIME" value={booking.time} />
-                      <Detail icon={<MapPin size={18} />} label="ROOM" value={booking.room} />
-                      <Detail icon={<UserRound size={18} />} label="BOOKER" value={booking.booker} />
-                      <Detail icon={<CalendarDays size={18} />} label="DATE" value={booking.date} />
-                    </div>
-                  </article>
-                ))}
-              </div>
-            </>
+                        <td className="border-b border-[#e5edf9] px-4 py-6">
+                          <StatusBadge status={status} />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           )}
         </section>
       </section>
 
-      <footer className="mt-2 border-t border-[#dce7f8] bg-white/70 px-5 py-5 sm:px-8 lg:px-10">
-        <div className="mx-auto flex max-w-[1800px] flex-col justify-between gap-2 text-xs text-slate-500 sm:flex-row sm:items-center sm:text-sm">
+      <footer className="border-t border-[#dce7f8] bg-white/70 px-5 py-5 sm:px-8 lg:px-10">
+        <div className="mx-auto flex max-w-[1800px] flex-col justify-between gap-2 text-sm text-slate-500 sm:flex-row">
           <p>Conference Room Booking System · Dangote</p>
-          <p>Last updated at {lastUpdated || "--:--:--"} IST</p>
+          <p>Last updated at {lastUpdated || "—"} IST</p>
         </div>
       </footer>
     </main>
@@ -619,22 +692,21 @@ function SummaryCard({
   value,
   iconClass,
 }: {
-  icon: ReactNode;
+  icon: React.ReactNode;
   label: string;
-  value: number | string;
+  value: string | number;
   iconClass: string;
 }) {
   return (
-    <div className="flex min-h-36 items-center gap-5 rounded-2xl border border-[#dfe9f8] bg-white p-6 shadow-[0_4px_12px_rgba(22,54,112,0.06)] transition hover:-translate-y-0.5 hover:shadow-md sm:p-8">
-      <div className={`flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl ${iconClass}`}>
+    <div className="flex min-h-[142px] items-center gap-5 rounded-2xl border border-[#dfe9f8] bg-white px-7 py-6 shadow-[0_4px_12px_rgba(22,54,112,0.06)]">
+      <div
+        className={`flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl ${iconClass}`}
+      >
         {icon}
       </div>
-
       <div>
-        <p className="text-sm font-medium text-slate-500 sm:text-base">
-          {label}
-        </p>
-        <p className="mt-1 text-3xl font-extrabold tabular-nums text-[#142f70] sm:text-4xl">
+        <p className="text-sm text-slate-500 sm:text-base">{label}</p>
+        <p className="mt-1 text-3xl font-extrabold text-[#142f70] sm:text-4xl">
           {value}
         </p>
       </div>
@@ -642,45 +714,22 @@ function SummaryCard({
   );
 }
 
-function StatusBadge({ status }: { status: string }) {
-  const styles: Record<string, string> = {
-    Upcoming: "bg-blue-50 text-blue-700 ring-blue-200",
-    "In Progress": "bg-emerald-50 text-emerald-700 ring-emerald-200",
-  };
-
-  const dotStyles: Record<string, string> = {
-    Upcoming: "bg-blue-600",
-    "In Progress": "bg-emerald-500",
-  };
+function StatusBadge({ status }: { status: MeetingStatus }) {
+  const styles =
+    status === "In Progress"
+      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+      : "border-blue-200 bg-blue-50 text-blue-700";
 
   return (
-    <span className={`inline-flex items-center gap-2 whitespace-nowrap rounded-full px-3 py-1.5 text-xs font-bold ring-1 ring-inset sm:text-sm ${styles[status] || styles.Upcoming}`}>
-      <span className={`h-2 w-2 rounded-full ${dotStyles[status] || dotStyles.Upcoming}`} />
+    <span
+      className={`inline-flex items-center gap-2 whitespace-nowrap rounded-full border px-3 py-1.5 text-sm font-semibold ${styles}`}
+    >
+      <span
+        className={`h-2 w-2 rounded-full ${
+          status === "In Progress" ? "bg-emerald-500" : "bg-blue-600"
+        }`}
+      />
       {status}
     </span>
-  );
-}
-
-function Detail({
-  icon,
-  label,
-  value,
-}: {
-  icon: ReactNode;
-  label: string;
-  value: string;
-}) {
-  return (
-    <div className="flex items-start gap-3">
-      <span className="mt-0.5 text-blue-600">{icon}</span>
-      <div className="min-w-0">
-        <p className="text-[11px] font-bold tracking-wider text-slate-400">
-          {label}
-        </p>
-        <p className="mt-1 break-words text-sm font-semibold text-[#142f70]">
-          {value || "—"}
-        </p>
-      </div>
-    </div>
   );
 }
