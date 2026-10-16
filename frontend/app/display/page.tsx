@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
+import type { ReactNode } from "react";
 import Image from "next/image";
 import {
   CalendarDays,
@@ -52,23 +53,25 @@ type RoomsResponse = {
   message?: string;
 };
 
+type BookingItem = {
+  id?: string;
+  _id?: string;
+  meeting?: string;
+  title?: string;
+  room?: string | { name?: string };
+  time?: string;
+  startTime?: string;
+  endTime?: string;
+  date?: string;
+  booker?: string;
+  status?: string;
+};
+
 type BookingsResponse = {
   success?: boolean;
   date?: string;
   count?: number;
-  bookings?: Array<{
-    id?: string;
-    _id?: string;
-    meeting?: string;
-    title?: string;
-    room?: string | { name?: string };
-    time?: string;
-    startTime?: string;
-    endTime?: string;
-    date?: string;
-    booker?: string;
-    status?: string;
-  }>;
+  bookings?: BookingItem[];
   message?: string;
 };
 
@@ -85,18 +88,21 @@ function formatDate(date: Date): string {
 function formatShortDate(value: string): string {
   if (!value) return "—";
 
-  // Avoid timezone shifting for YYYY-MM-DD values.
   const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
 
   if (match) {
     const [, year, month, day] = match;
-    return `${day} ${new Intl.DateTimeFormat("en-IN", {
+
+    const monthName = new Intl.DateTimeFormat("en-IN", {
       month: "short",
       timeZone: IST_TIMEZONE,
-    }).format(new Date(Number(year), Number(month) - 1, Number(day)))} ${year}`;
+    }).format(new Date(Number(year), Number(month) - 1, Number(day)));
+
+    return `${day} ${monthName} ${year}`;
   }
 
   const parsed = new Date(value);
+
   if (Number.isNaN(parsed.getTime())) return value;
 
   return new Intl.DateTimeFormat("en-IN", {
@@ -107,13 +113,12 @@ function formatShortDate(value: string): string {
   }).format(parsed);
 }
 
-function getRoomName(room: Booking["room"]): string {
+function getRoomName(room: BookingItem["room"]): string {
   if (typeof room === "string") return room;
   return room?.name || "Conference Room";
 }
 
-function getBookingTime(booking: BookingsResponse["bookings"] extends
-  (infer T)[] | undefined ? T : never): string {
+function getBookingTime(booking: BookingItem): string {
   if (booking.time) return booking.time;
 
   const start = booking.startTime || "";
@@ -122,68 +127,97 @@ function getBookingTime(booking: BookingsResponse["bookings"] extends
   return start || end ? `${start} - ${end}` : "Time not specified";
 }
 
-function formatClock(now: Date): string {
+function formatClock(date: Date): string {
   return new Intl.DateTimeFormat("en-IN", {
     timeZone: IST_TIMEZONE,
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
     hour12: true,
-  }).format(now);
+  }).format(date);
+}
+
+function getISTMinutes(date: Date): number {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: IST_TIMEZONE,
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+
+  const hour = Number(parts.find((part) => part.type === "hour")?.value || 0);
+  const minute = Number(
+    parts.find((part) => part.type === "minute")?.value || 0
+  );
+
+  return hour * 60 + minute;
+}
+
+function getISTDateString(date: Date): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: IST_TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+
+  const values: Record<string, string> = {};
+
+  for (const part of parts) {
+    if (part.type !== "literal") values[part.type] = part.value;
+  }
+
+  return `${values.year}-${values.month}-${values.day}`;
 }
 
 function getStatus(booking: Booking, now: Date): string {
-  const status = (booking.status || "").toUpperCase();
+  const storedStatus = (booking.status || "").toUpperCase();
 
-  if (status === "CANCELLED") return "Cancelled";
-  if (status === "COMPLETED") return "Completed";
+  if (storedStatus === "CANCELLED") return "Cancelled";
 
-  const times = booking.time.match(
-    /(\d{1,2}):(\d{2})\s*(AM|PM)?\s*-\s*(\d{1,2}):(\d{2})\s*(AM|PM)?/i
+  const timeMatch = booking.time.match(
+    /^\s*(\d{1,2}):(\d{2})\s*(AM|PM)?\s*-\s*(\d{1,2}):(\d{2})\s*(AM|PM)?\s*$/i
   );
 
-  if (times) {
-    const today = new Intl.DateTimeFormat("en-CA", {
-      timeZone: IST_TIMEZONE,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    }).format(now);
+  if (timeMatch && booking.date === getISTDateString(now)) {
+    const [, startHour, startMinute, startPeriod, endHour, endMinute, endPeriod] =
+      timeMatch;
 
-    if (booking.date === today) {
-      const [, sh, sm, sap, eh, em, eap] = times;
+    const toMinutes = (hourText: string, minuteText: string, period?: string) => {
+      let hour = Number(hourText);
 
-      const toMinutes = (
-        hours: string,
-        minutes: string,
-        ampm?: string
-      ) => {
-        let h = Number(hours) % 12;
-        if (ampm?.toUpperCase() === "PM") h += 12;
-        if (!ampm && Number(hours) >= 13) h = Number(hours);
-        return h * 60 + Number(minutes);
-      };
+      if (period) {
+        hour %= 12;
+        if (period.toUpperCase() === "PM") hour += 12;
+      }
 
-      const start = toMinutes(sh, sm, sap);
-      const end = toMinutes(eh, em, eap);
+      return hour * 60 + Number(minuteText);
+    };
 
-      const parts = new Intl.DateTimeFormat("en-GB", {
-        timeZone: IST_TIMEZONE,
-        hour: "2-digit",
-        minute: "2-digit",
-        hourCycle: "h23",
-      }).formatToParts(now);
+    const start = toMinutes(startHour, startMinute, startPeriod);
+    const end = toMinutes(endHour, endMinute, endPeriod);
+    const current = getISTMinutes(now);
 
-      const hour = Number(parts.find((p) => p.type === "hour")?.value || 0);
-      const minute = Number(parts.find((p) => p.type === "minute")?.value || 0);
-      const current = hour * 60 + minute;
-
-      if (current >= end) return "Completed";
-      if (current >= start && current < end) return "In progress";
-    }
+    if (current >= end) return "Completed";
+    if (current >= start && current < end) return "In progress";
   }
 
+  if (storedStatus === "COMPLETED") return "Completed";
+
   return "Upcoming";
+}
+
+function getStatusClass(status: string): string {
+  switch (status) {
+    case "Completed":
+      return "border-emerald-200 bg-emerald-50 text-emerald-700";
+    case "In progress":
+      return "border-emerald-200 bg-emerald-50 text-emerald-700";
+    case "Cancelled":
+      return "border-red-200 bg-red-50 text-red-700";
+    default:
+      return "border-blue-200 bg-blue-50 text-blue-700";
+  }
 }
 
 export default function DisplayPage() {
@@ -196,7 +230,6 @@ export default function DisplayPage() {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [loading, setLoading] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [retryMessage, setRetryMessage] = useState("");
 
   const roomFetchStarted = useRef(false);
   const bookingsFetchRunning = useRef(false);
@@ -204,15 +237,13 @@ export default function DisplayPage() {
   const roomRetryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const bookingsRetryDelay = useRef(REFRESH_INTERVAL);
 
-  // Set the clock after hydration to prevent server/client text mismatches.
+  // Start the live clock only on the client to avoid hydration mismatches.
   useEffect(() => {
     setNow(new Date());
 
-    const clockTimer = setInterval(() => {
-      setNow(new Date());
-    }, 1000);
+    const timer = setInterval(() => setNow(new Date()), 1000);
 
-    return () => clearInterval(clockTimer);
+    return () => clearInterval(timer);
   }, []);
 
   const fetchRooms = useCallback(async () => {
@@ -226,9 +257,7 @@ export default function DisplayPage() {
 
       if (!response.ok) {
         if (response.status === 429) {
-          throw new Error(
-            "The server is rate-limiting room requests. Retrying shortly."
-          );
+          throw new Error("The room service is busy. Retrying shortly.");
         }
 
         throw new Error(`Unable to load rooms (${response.status}).`);
@@ -249,19 +278,19 @@ export default function DisplayPage() {
         .sort((a, b) => a.name.localeCompare(b.name));
 
       setRooms(normalizedRooms);
+      roomFetchStarted.current = true;
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Unable to load rooms.";
 
       setRoomsError(message);
 
-      // Retry the room list after a delay instead of on every refresh.
       if (roomRetryTimer.current) clearTimeout(roomRetryTimer.current);
 
       roomRetryTimer.current = setTimeout(() => {
         roomFetchStarted.current = false;
         void loadRoomsOnce();
-      }, message.includes("rate-limit") ? 30_000 : 15_000);
+      }, message.includes("busy") ? 30_000 : 15_000);
     }
   }, []);
 
@@ -271,15 +300,11 @@ export default function DisplayPage() {
     roomFetchStarted.current = true;
     await fetchRooms();
 
-    // Allow another attempt only if the fetch failed.
-    // A successful room list is kept and not fetched every 10 seconds.
-    setRooms((currentRooms) => {
-      if (currentRooms.length > 0) {
-        roomFetchStarted.current = true;
-      }
-      return currentRooms;
-    });
-  }, [fetchRooms]);
+    // A failed request may be retried; successful rooms are retained.
+    if (rooms.length === 0 && !roomRetryTimer.current) {
+      roomFetchStarted.current = false;
+    }
+  }, [fetchRooms, rooms.length]);
 
   const fetchBookings = useCallback(async () => {
     if (bookingsFetchRunning.current) return;
@@ -302,7 +327,7 @@ export default function DisplayPage() {
           );
 
           throw new Error(
-            `The server is temporarily rate-limiting requests. Retrying in ${Math.round(
+            `The server is busy. Retrying in ${Math.round(
               bookingsRetryDelay.current / 1000
             )} seconds.`
           );
@@ -331,7 +356,6 @@ export default function DisplayPage() {
 
       setBookings(normalizedBookings);
       setLastUpdated(new Date());
-      setRetryMessage("");
       bookingsRetryDelay.current = REFRESH_INTERVAL;
     } catch (error) {
       const message =
@@ -340,14 +364,13 @@ export default function DisplayPage() {
           : "Unable to load today's bookings.";
 
       setBookingsError(message);
-      setRetryMessage(message);
     } finally {
       bookingsFetchRunning.current = false;
       setLoading(false);
     }
   }, []);
 
-  // Fetch the room list once when the display opens.
+  // Fetch room names once, with delayed retries on failure.
   useEffect(() => {
     void loadRoomsOnce();
 
@@ -356,30 +379,28 @@ export default function DisplayPage() {
     };
   }, [loadRoomsOnce]);
 
-  // Refresh only today's bookings. Do not fetch rooms every 10 seconds.
+  // Refresh today's bookings with backoff if the API is rate-limiting.
   useEffect(() => {
     let cancelled = false;
 
-    const runRefresh = async () => {
+    const refreshLoop = async () => {
       if (cancelled) return;
 
       await fetchBookings();
 
       if (cancelled) return;
 
-      const delay = bookingsRetryDelay.current;
-
-      bookingsTimer.current = setTimeout(runRefresh, delay);
+      bookingsTimer.current = setTimeout(
+        refreshLoop,
+        bookingsRetryDelay.current
+      );
     };
 
-    void runRefresh();
+    void refreshLoop();
 
     return () => {
       cancelled = true;
-
-      if (bookingsTimer.current) {
-        clearTimeout(bookingsTimer.current);
-      }
+      if (bookingsTimer.current) clearTimeout(bookingsTimer.current);
     };
   }, [fetchBookings]);
 
@@ -388,9 +409,7 @@ export default function DisplayPage() {
 
     const selected = rooms.find((room) => room.id === selectedRoom);
 
-    return bookings.filter((booking) => {
-      return booking.room === selected?.name;
-    });
+    return bookings.filter((booking) => booking.room === selected?.name);
   }, [bookings, selectedRoom, rooms]);
 
   const roomsBooked = useMemo(
@@ -420,10 +439,8 @@ export default function DisplayPage() {
     try {
       if (!document.fullscreenElement) {
         await document.documentElement.requestFullscreen();
-        setIsFullscreen(true);
       } else {
         await document.exitFullscreen();
-        setIsFullscreen(false);
       }
     } catch (error) {
       console.error("Fullscreen mode is unavailable:", error);
@@ -438,10 +455,7 @@ export default function DisplayPage() {
     document.addEventListener("fullscreenchange", handleFullscreenChange);
 
     return () => {
-      document.removeEventListener(
-        "fullscreenchange",
-        handleFullscreenChange
-      );
+      document.removeEventListener("fullscreenchange", handleFullscreenChange);
     };
   }, []);
 
@@ -451,16 +465,16 @@ export default function DisplayPage() {
   return (
     <div className="flex min-h-screen flex-col bg-[#edf4ff] text-[#173875]">
       {/* Header */}
-      <header className="border-b border-white/15 bg-[#193a7b] text-white shadow-sm">
+      <header className="shrink-0 border-b border-white/15 bg-[#193a7b] text-white shadow-sm">
         <div className="mx-auto flex min-h-[112px] w-full max-w-[1920px] flex-col justify-between gap-4 px-4 py-4 sm:flex-row sm:items-center sm:px-8 lg:px-12">
           <div className="flex min-w-0 items-center gap-5">
-            <div className="relative flex h-[76px] w-[145px] shrink-0 items-center justify-center sm:h-[84px] sm:w-[160px]">
+            <div className="relative flex h-[76px] w-[145px] shrink-0 items-center justify-center sm:h-[90px] sm:w-[170px]">
               <Image
                 src="/dangote-logo-white.png"
                 alt="Dangote"
                 fill
                 priority
-                sizes="160px"
+                sizes="170px"
                 className="object-contain"
               />
             </div>
@@ -512,7 +526,7 @@ export default function DisplayPage() {
       {/* Main content */}
       <main className="mx-auto flex w-full max-w-[1920px] flex-1 flex-col px-4 py-5 sm:px-6 sm:py-6 lg:px-10">
         {/* Summary cards */}
-        <section className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-3">
+        <section className="mb-6 grid shrink-0 grid-cols-1 gap-4 md:grid-cols-3">
           <SummaryCard
             icon={<CalendarDays className="h-7 w-7" />}
             label="Today's Meetings"
@@ -535,9 +549,9 @@ export default function DisplayPage() {
           />
         </section>
 
-        {/* Schedule panel grows to keep footer at the bottom */}
+        {/* Schedule panel */}
         <section className="flex flex-1 flex-col overflow-hidden rounded-2xl border border-blue-100 bg-white shadow-sm">
-          <div className="flex flex-col justify-between gap-4 border-b border-blue-100 px-5 py-5 lg:flex-row lg:items-center lg:px-7">
+          <div className="flex shrink-0 flex-col justify-between gap-4 border-b border-blue-100 px-5 py-5 lg:flex-row lg:items-center lg:px-7">
             <div className="flex items-center gap-4">
               <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-[#193a7b] text-white shadow-sm">
                 <CalendarDays className="h-7 w-7" />
@@ -566,7 +580,7 @@ export default function DisplayPage() {
 
               <label
                 htmlFor="room-filter"
-                className="text-sm font-medium text-slate-600"
+                className="text-sm font-semibold text-slate-600"
               >
                 Room:
               </label>
@@ -603,32 +617,35 @@ export default function DisplayPage() {
             {(roomsError || bookingsError) && (
               <div
                 role="status"
-                className="mb-4 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800"
+                className="mb-4 flex shrink-0 items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-base text-amber-800"
               >
                 <AlertCircle className="mt-0.5 h-5 w-5 shrink-0" />
                 <div>
-                  <p className="font-semibold">
+                  <p className="font-bold">
                     {roomsError ? "Room list warning" : "Schedule warning"}
                   </p>
-                  <p>{roomsError || bookingsError}</p>
-                  <p className="mt-1 text-xs">
-                    The display will retry automatically. Check the backend
-                    rate limiter if this message persists.
+                  <p>{bookingsError || roomsError}</p>
+                  <p className="mt-1 text-sm">
+                    The display will retry automatically.
                   </p>
                 </div>
               </div>
             )}
 
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[850px] border-separate border-spacing-0 text-left">
+              <table className="w-full min-w-[1050px] border-separate border-spacing-0 text-left">
                 <thead>
-                  <tr className="bg-[#eaf1ff] text-xs uppercase tracking-wide text-slate-600">
-                    <th className="rounded-l-xl px-4 py-4 font-bold">Time</th>
-                    <th className="px-4 py-4 font-bold">Meeting</th>
-                    <th className="px-4 py-4 font-bold">Room</th>
-                    <th className="px-4 py-4 font-bold">Booker</th>
-                    <th className="px-4 py-4 font-bold">Date</th>
-                    <th className="rounded-r-xl px-4 py-4 font-bold">Status</th>
+                  <tr className="bg-[#eaf1ff] text-base uppercase tracking-wide text-slate-700">
+                    <th className="rounded-l-xl px-5 py-5 font-extrabold">
+                      Time
+                    </th>
+                    <th className="px-5 py-5 font-extrabold">Meeting</th>
+                    <th className="px-5 py-5 font-extrabold">Room</th>
+                    <th className="px-5 py-5 font-extrabold">Booker</th>
+                    <th className="px-5 py-5 font-extrabold">Date</th>
+                    <th className="rounded-r-xl px-5 py-5 font-extrabold">
+                      Status
+                    </th>
                   </tr>
                 </thead>
 
@@ -638,55 +655,48 @@ export default function DisplayPage() {
                       ? getStatus(booking, now)
                       : booking.status || "Upcoming";
 
-                    const statusClass =
-                      status === "Completed"
-                        ? "bg-slate-100 text-slate-600"
-                        : status === "In progress"
-                          ? "bg-emerald-50 text-emerald-700"
-                          : status === "Cancelled"
-                            ? "bg-red-50 text-red-700"
-                            : "bg-blue-50 text-blue-700";
-
                     return (
-                      <tr key={booking.id} className="text-sm">
-                        <td className="border-b border-blue-100 px-4 py-5">
-                          <div className="flex items-center gap-3 whitespace-nowrap font-semibold">
-                            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
-                              <Clock3 className="h-5 w-5" />
+                      <tr
+                        key={booking.id}
+                        className="text-lg xl:text-xl"
+                      >
+                        <td className="whitespace-nowrap border-b border-blue-100 px-5 py-7">
+                          <div className="flex items-center gap-3 whitespace-nowrap font-bold text-[#173875]">
+                            <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
+                              <Clock3 className="h-6 w-6" />
                             </span>
                             {booking.time}
                           </div>
                         </td>
 
-                        <td className="border-b border-blue-100 px-4 py-5 font-semibold text-[#173875]">
-                          {booking.meeting}
+                        <td className="border-b border-blue-100 px-5 py-7 text-xl font-extrabold leading-snug text-[#173875] xl:text-2xl">
+                          <span className="block min-w-[220px] max-w-[420px] whitespace-normal break-words">
+                            {booking.meeting}
+                          </span>
                         </td>
 
-                        <td className="border-b border-blue-100 px-4 py-5">
-                          <div className="flex items-center gap-3 whitespace-nowrap font-semibold">
-                            <MapPin className="h-5 w-5 shrink-0 text-blue-600" />
+                        <td className="whitespace-nowrap border-b border-blue-100 px-5 py-7 text-xl font-bold text-[#173875] xl:text-2xl">
+                          <div className="flex items-center gap-3">
+                            <MapPin className="h-6 w-6 shrink-0 text-blue-600" />
                             {booking.room}
                           </div>
                         </td>
 
-                        <td className="border-b border-blue-100 px-4 py-5">
-                          <div className="flex items-center gap-3 whitespace-nowrap font-semibold">
-                            <UserRound className="h-5 w-5 shrink-0 text-blue-600" />
-                            {booking.booker}
+                        <td className="border-b border-blue-100 px-5 py-7 text-xl font-bold text-[#173875] xl:text-2xl">
+                          <div className="flex min-w-[190px] items-center gap-3">
+                            <UserRound className="h-6 w-6 shrink-0 text-blue-600" />
+                            <span className="whitespace-normal break-words">
+                              {booking.booker}
+                            </span>
                           </div>
                         </td>
 
-                        <td className="border-b border-blue-100 px-4 py-5 whitespace-nowrap text-slate-600">
+                        <td className="whitespace-nowrap border-b border-blue-100 px-5 py-7 text-lg font-semibold text-slate-700 xl:text-xl">
                           {formatShortDate(booking.date)}
                         </td>
 
-                        <td className="border-b border-blue-100 px-4 py-5">
-                          <span
-                            className={`inline-flex whitespace-nowrap items-center gap-2 rounded-full px-3 py-2 text-xs font-semibold ${statusClass}`}
-                          >
-                            <span className="h-2 w-2 rounded-full bg-current" />
-                            {status}
-                          </span>
+                        <td className="border-b border-blue-100 px-5 py-7">
+                          <StatusBadge status={status} />
                         </td>
                       </tr>
                     );
@@ -696,14 +706,16 @@ export default function DisplayPage() {
                     <tr>
                       <td colSpan={6} className="px-4 py-16 text-center">
                         <div className="mx-auto flex max-w-md flex-col items-center">
-                          <CalendarDays className="mb-3 h-10 w-10 text-slate-300" />
-                          <p className="text-base font-semibold text-slate-600">
-                            {selectedRoom === "all"
-                              ? "No meetings scheduled today"
-                              : "No meetings scheduled for this room"}
+                          <CalendarDays className="mb-3 h-12 w-12 text-slate-300" />
+                          <p className="text-xl font-bold text-slate-600">
+                            {loading
+                              ? "Loading today's meetings..."
+                              : selectedRoom === "all"
+                                ? "No meetings scheduled today"
+                                : "No meetings scheduled for this room"}
                           </p>
-                          <p className="mt-1 text-sm text-slate-400">
-                            Bookings will appear here automatically when
+                          <p className="mt-2 text-base text-slate-400">
+                            Meetings will appear here automatically when
                             available.
                           </p>
                         </div>
@@ -714,11 +726,12 @@ export default function DisplayPage() {
               </table>
             </div>
 
-            <div className="mt-auto flex flex-col justify-between gap-2 border-t border-blue-100 pt-4 text-xs text-slate-500 sm:flex-row sm:items-center">
+            <div className="mt-auto flex shrink-0 flex-col justify-between gap-2 border-t border-blue-100 pt-4 text-base text-slate-600 sm:flex-row sm:items-center">
               <p>
                 {visibleBookings.length}{" "}
                 {visibleBookings.length === 1 ? "meeting" : "meetings"} displayed
               </p>
+
               <p>
                 {lastUpdated
                   ? `Last updated at ${formatClock(lastUpdated)} IST`
@@ -730,7 +743,7 @@ export default function DisplayPage() {
       </main>
 
       {/* Footer stays at the bottom even when there are few bookings */}
-      <footer className="mt-auto border-t border-blue-100 bg-white/80">
+      <footer className="mt-auto shrink-0 border-t border-blue-100 bg-white/80">
         <div className="mx-auto flex w-full max-w-[1920px] flex-col justify-between gap-2 px-4 py-5 text-sm text-slate-500 sm:flex-row sm:items-center sm:px-8 lg:px-10">
           <p>© Dangote Project Office. All rights reserved</p>
           <p>All times shown in India Standard Time (IST)</p>
@@ -740,13 +753,26 @@ export default function DisplayPage() {
   );
 }
 
+function StatusBadge({ status }: { status: string }) {
+  return (
+    <span
+      className={`inline-flex items-center gap-2 whitespace-nowrap rounded-full border px-5 py-3 text-base font-extrabold ${getStatusClass(
+        status
+      )}`}
+    >
+      <span className="h-2.5 w-2.5 rounded-full bg-current" />
+      {status}
+    </span>
+  );
+}
+
 function SummaryCard({
   icon,
   label,
   value,
   iconClass,
 }: {
-  icon: React.ReactNode;
+  icon: ReactNode;
   label: string;
   value: number;
   iconClass: string;
@@ -760,8 +786,8 @@ function SummaryCard({
       </div>
 
       <div>
-        <p className="text-sm text-slate-500 sm:text-base">{label}</p>
-        <p className="mt-1 text-3xl font-extrabold leading-none text-[#173875] sm:text-4xl">
+        <p className="text-base text-slate-500 sm:text-lg">{label}</p>
+        <p className="mt-1 text-4xl font-extrabold leading-none text-[#173875] sm:text-5xl">
           {value}
         </p>
       </div>
