@@ -73,6 +73,10 @@ export default function AdminBookingsContent() {
   const [rooms, setRooms] =
     useState<BookingRoom[]>([]);
 
+  // Filters for the Admin All Bookings list only.
+  const [selectedRoom, setSelectedRoom] = useState("all");
+  const [selectedDate, setSelectedDate] = useState("");
+
   const [bookingToCancel, setBookingToCancel] =
     useState<Booking | null>(null);
 
@@ -568,6 +572,21 @@ export default function AdminBookingsContent() {
         booking.status === "CANCELLED"
     ).length;
 
+  const filteredBookings = bookings.filter((booking) => {
+    const matchesRoom =
+      selectedRoom === "all" || booking.room?._id === selectedRoom;
+    const bookingDate = booking.date ? booking.date.slice(0, 10) : "";
+    const matchesDate = !selectedDate || bookingDate === selectedDate;
+    return matchesRoom && matchesDate;
+  });
+
+  const hasActiveFilters = selectedRoom !== "all" || selectedDate !== "";
+
+  function clearFilters() {
+    setSelectedRoom("all");
+    setSelectedDate("");
+  }
+
   /* =====================================================
      RENDER
   ===================================================== */
@@ -776,6 +795,76 @@ export default function AdminBookingsContent() {
       )}
 
       {/* =================================================
+          ROOM AND DATE FILTERS
+      ================================================= */}
+
+      {!isLoading && bookings.length > 0 && (
+        <section className="mb-6 rounded-2xl border border-[#D5E2F7] bg-white p-5 shadow-sm">
+          <div className="mb-4">
+            <h2 className="text-lg font-bold text-[#10275F]">Filter Bookings</h2>
+            <p className="mt-1 text-sm text-[#64748B]">
+              Narrow the list by conference room and booking date.
+            </p>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_auto] lg:items-end">
+            <div>
+              <label htmlFor="admin-bookings-room-filter" className="mb-2 block text-sm font-semibold text-[#10275F]">
+                Conference Room
+              </label>
+              <select
+                id="admin-bookings-room-filter"
+                value={selectedRoom}
+                onChange={(event) => setSelectedRoom(event.target.value)}
+                className="h-12 w-full rounded-xl border border-[#D5E2F7] bg-white px-4 text-sm font-medium text-[#10275F] outline-none transition focus:border-[#1D55B8] focus:ring-4 focus:ring-[#1D55B8]/10"
+              >
+                <option value="all">All rooms</option>
+                {rooms.map((room) => (
+                  <option key={room._id} value={room._id}>
+                    {room.name}{room.location ? ` — ${room.location}` : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label htmlFor="admin-bookings-date-filter" className="mb-2 block text-sm font-semibold text-[#10275F]">
+                Booking Date
+              </label>
+              <input
+                id="admin-bookings-date-filter"
+                type="date"
+                value={selectedDate}
+                onChange={(event) => setSelectedDate(event.target.value)}
+                className="h-12 w-full rounded-xl border border-[#D5E2F7] bg-white px-4 text-sm font-medium text-[#10275F] outline-none transition focus:border-[#1D55B8] focus:ring-4 focus:ring-[#1D55B8]/10"
+              />
+            </div>
+
+            <button
+              type="button"
+              onClick={clearFilters}
+              disabled={!hasActiveFilters}
+              className="inline-flex h-12 items-center justify-center gap-2 rounded-xl border border-[#D5E2F7] bg-white px-5 text-sm font-bold text-[#10275F] transition hover:border-[#B8CCEC] hover:bg-[#EEF4FF] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <X size={16} />
+              Clear Filters
+            </button>
+          </div>
+
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-[#E5ECF7] pt-4 text-sm">
+            <p className="text-[#64748B]">
+              Showing <span className="font-bold text-[#10275F]">{filteredBookings.length}</span> of <span className="font-bold text-[#10275F]">{bookings.length}</span> bookings
+            </p>
+            {hasActiveFilters && (
+              <button type="button" onClick={clearFilters} className="font-semibold text-[#1D55B8] hover:underline">
+                Reset filters
+              </button>
+            )}
+          </div>
+        </section>
+      )}
+
+      {/* =================================================
           LOADING
       ================================================= */}
 
@@ -825,6 +914,30 @@ export default function AdminBookingsContent() {
 
         </div>
 
+      ) : filteredBookings.length === 0 ? (
+
+        <div className="rounded-2xl border border-[#D5E2F7] bg-white p-12 text-center shadow-sm">
+          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-[#EEF4FF] text-[#1D55B8]">
+            <CalendarDays size={32} />
+          </div>
+          <h2 className="mt-5 text-xl font-bold text-[#10275F]">
+            No Matching Bookings
+          </h2>
+          <p className="mt-2 text-sm text-[#64748B]">
+            No bookings match the selected room and date. Try changing the filters or clearing them.
+          </p>
+          {hasActiveFilters && (
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="mt-5 inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-[#102D72] px-5 text-sm font-bold text-white transition hover:bg-[#0C245C]"
+            >
+              <X size={16} />
+              Clear Filters
+            </button>
+          )}
+        </div>
+
       ) : (
 
         /* =================================================
@@ -833,7 +946,7 @@ export default function AdminBookingsContent() {
 
         <div className="space-y-5">
 
-          {bookings.map((booking) => {
+          {filteredBookings.map((booking) => {
 
             const statusStyle =
               getStatusStyle(
