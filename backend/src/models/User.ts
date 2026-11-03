@@ -1,5 +1,7 @@
+
 import mongoose, {
   Document,
+  Model,
   Schema,
 } from "mongoose";
 
@@ -7,14 +9,9 @@ import mongoose, {
    TYPES
 ===================================================== */
 
-export type UserRole =
-  | "ADMIN"
-  | "EMPLOYEE";
+export type UserRole = "ADMIN" | "EMPLOYEE";
 
-export type CalendarView =
-  | "DAY"
-  | "WEEK"
-  | "MONTH";
+export type CalendarView = "DAY" | "WEEK" | "MONTH";
 
 /* =====================================================
    WORKING DAY TYPE
@@ -56,63 +53,45 @@ export interface IUserNotifications {
 ===================================================== */
 
 export interface IUser extends Document {
-  /* -------------------- Basic Information -------------------- */
+  /* BASIC INFORMATION */
 
   name: string;
-
   email: string;
-
   passwordHash: string;
-
   department?: string;
 
-  /* -------------------- Role -------------------- */
+  /* ROLE */
 
   role: UserRole;
 
-  /* -------------------- Profile -------------------- */
+  /* PROFILE */
 
   profileImage?: string;
 
-  /* -------------------- Booking Preferences -------------------- */
+  /* BOOKING PREFERENCES */
 
   defaultLocation?: string;
-
   favoriteRoom?: mongoose.Types.ObjectId;
-
   defaultDuration: number;
-
   calendarView: CalendarView;
-
   timezone: string;
 
-  /* -------------------- Notifications -------------------- */
+  /* NOTIFICATIONS */
 
   notifications: IUserNotifications;
 
-  /* -------------------- Working Hours -------------------- */
+  /* WORKING HOURS */
 
   workingHours: IWorkingHours;
 
-  /* -------------------- Password Reset -------------------- */
+  /* PASSWORD RESET */
 
-  /**
-   * SHA-256 hash of the password reset token.
-   *
-   * We store only the hash in MongoDB,
-   * never the raw reset token.
-   */
   passwordResetTokenHash?: string | null;
-
-  /**
-   * Time at which the password reset token expires.
-   */
   passwordResetExpiresAt?: Date | null;
 
-  /* -------------------- Timestamps -------------------- */
+  /* TIMESTAMPS */
 
   createdAt: Date;
-
   updatedAt: Date;
 }
 
@@ -120,250 +99,220 @@ export interface IUser extends Document {
    WORKING DAY SCHEMA
 ===================================================== */
 
-const workingDaySchema =
-  new Schema<IWorkingDay>(
-    {
-      enabled: {
-        type: Boolean,
-        default: true,
-      },
-
-      start: {
-        type: String,
-        default: "09:00",
-        trim: true,
-      },
-
-      end: {
-        type: String,
-        default: "18:00",
-        trim: true,
-      },
+const workingDaySchema = new Schema<IWorkingDay>(
+  {
+    enabled: {
+      type: Boolean,
+      default: true,
     },
-    {
-      _id: false,
-    }
-  );
+
+    start: {
+      type: String,
+      default: "09:00",
+      trim: true,
+    },
+
+    end: {
+      type: String,
+      default: "18:00",
+      trim: true,
+    },
+  },
+  {
+    _id: false,
+  }
+);
 
 /* =====================================================
    USER SCHEMA
 ===================================================== */
 
-const userSchema =
-  new Schema<IUser>(
-    {
-      /* =================================================
-         BASIC INFORMATION
-      ================================================= */
+const userSchema = new Schema<IUser>(
+  {
+    /* BASIC INFORMATION */
 
-      name: {
-        type: String,
-        required: true,
-        trim: true,
-        minlength: 2,
-        maxlength: 100,
+    name: {
+      type: String,
+      required: true,
+      trim: true,
+      minlength: 2,
+      maxlength: 100,
+    },
+
+    email: {
+      type: String,
+      required: true,
+      unique: true,
+      lowercase: true,
+      trim: true,
+      index: true,
+    },
+
+    passwordHash: {
+      type: String,
+      required: true,
+      select: false,
+    },
+
+    department: {
+      type: String,
+      trim: true,
+      maxlength: 100,
+    },
+
+    /* ROLE */
+
+    role: {
+      type: String,
+      enum: ["ADMIN", "EMPLOYEE"],
+      default: "EMPLOYEE",
+      required: true,
+      index: true,
+    },
+
+    /* PROFILE */
+
+    profileImage: {
+      type: String,
+      trim: true,
+    },
+
+    /* BOOKING PREFERENCES */
+
+    defaultLocation: {
+      type: String,
+      trim: true,
+      maxlength: 200,
+    },
+
+    favoriteRoom: {
+      type: Schema.Types.ObjectId,
+      ref: "Room",
+    },
+
+    defaultDuration: {
+      type: Number,
+      default: 60,
+      min: 15,
+      max: 480,
+    },
+
+    calendarView: {
+      type: String,
+      enum: ["DAY", "WEEK", "MONTH"],
+      default: "WEEK",
+    },
+
+    timezone: {
+      type: String,
+      default: "Asia/Kolkata",
+      trim: true,
+    },
+
+    /* NOTIFICATIONS */
+
+    notifications: {
+      bookingConfirmation: {
+        type: Boolean,
+        default: true,
       },
 
-      email: {
-        type: String,
-        required: true,
-        unique: true,
-        lowercase: true,
-        trim: true,
-        index: true,
+      bookingCancellation: {
+        type: Boolean,
+        default: true,
       },
 
-      passwordHash: {
-        type: String,
-        required: true,
-        select: false,
+      bookingReminder: {
+        type: Boolean,
+        default: true,
       },
 
-      department: {
-        type: String,
-        trim: true,
-        maxlength: 100,
-      },
-
-      /* =================================================
-         ROLE
-      ================================================= */
-
-      role: {
-        type: String,
-        enum: [
-          "ADMIN",
-          "EMPLOYEE",
-        ],
-        default: "EMPLOYEE",
-        required: true,
-        index: true,
-      },
-
-      /* =================================================
-         PROFILE
-      ================================================= */
-
-      profileImage: {
-        type: String,
-        trim: true,
-      },
-
-      /* =================================================
-         BOOKING PREFERENCES
-      ================================================= */
-
-      defaultLocation: {
-        type: String,
-        trim: true,
-        maxlength: 200,
-      },
-
-      favoriteRoom: {
-        type: Schema.Types.ObjectId,
-        ref: "Room",
-      },
-
-      defaultDuration: {
-        type: Number,
-        default: 60,
-        min: 15,
-        max: 480,
-      },
-
-      calendarView: {
-        type: String,
-        enum: [
-          "DAY",
-          "WEEK",
-          "MONTH",
-        ],
-        default: "WEEK",
-      },
-
-      timezone: {
-        type: String,
-        default: "Asia/Kolkata",
-        trim: true,
-      },
-
-      /* =================================================
-         NOTIFICATIONS
-      ================================================= */
-
-      notifications: {
-        bookingConfirmation: {
-          type: Boolean,
-          default: true,
-        },
-
-        bookingCancellation: {
-          type: Boolean,
-          default: true,
-        },
-
-        bookingReminder: {
-          type: Boolean,
-          default: true,
-        },
-
-        roomAvailable: {
-          type: Boolean,
-          default: false,
-        },
-      },
-
-      /* =================================================
-         WORKING HOURS
-      ================================================= */
-
-      workingHours: {
-        /* ---------------- Monday ---------------- */
-
-        monday: {
-          type: workingDaySchema,
-          default: () => ({}),
-        },
-
-        /* ---------------- Tuesday ---------------- */
-
-        tuesday: {
-          type: workingDaySchema,
-          default: () => ({}),
-        },
-
-        /* ---------------- Wednesday ---------------- */
-
-        wednesday: {
-          type: workingDaySchema,
-          default: () => ({}),
-        },
-
-        /* ---------------- Thursday ---------------- */
-
-        thursday: {
-          type: workingDaySchema,
-          default: () => ({}),
-        },
-
-        /* ---------------- Friday ---------------- */
-
-        friday: {
-          type: workingDaySchema,
-          default: () => ({}),
-        },
-
-        /* ---------------- Saturday ---------------- */
-
-        saturday: {
-          type: workingDaySchema,
-          default: () => ({
-            enabled: false,
-          }),
-        },
-
-        /* ---------------- Sunday ---------------- */
-
-        sunday: {
-          type: workingDaySchema,
-          default: () => ({
-            enabled: false,
-          }),
-        },
-      },
-
-      /* =================================================
-         PASSWORD RESET
-      ================================================= */
-
-      passwordResetTokenHash: {
-        type: String,
-        default: null,
-        select: false,
-      },
-
-      passwordResetExpiresAt: {
-        type: Date,
-        default: null,
-        select: false,
+      roomAvailable: {
+        type: Boolean,
+        default: false,
       },
     },
 
-    /* =================================================
-       SCHEMA OPTIONS
-    ================================================= */
+    /* WORKING HOURS */
 
-    {
-      timestamps: true,
-    }
-  );
+    workingHours: {
+      monday: {
+        type: workingDaySchema,
+        default: () => ({}),
+      },
+
+      tuesday: {
+        type: workingDaySchema,
+        default: () => ({}),
+      },
+
+      wednesday: {
+        type: workingDaySchema,
+        default: () => ({}),
+      },
+
+      thursday: {
+        type: workingDaySchema,
+        default: () => ({}),
+      },
+
+      friday: {
+        type: workingDaySchema,
+        default: () => ({}),
+      },
+
+      saturday: {
+        type: workingDaySchema,
+        default: () => ({
+          enabled: false,
+        }),
+      },
+
+      sunday: {
+        type: workingDaySchema,
+        default: () => ({
+          enabled: false,
+        }),
+      },
+    },
+
+    /* PASSWORD RESET */
+
+    passwordResetTokenHash: {
+      type: String,
+      default: null,
+      select: false,
+    },
+
+    passwordResetExpiresAt: {
+      type: Date,
+      default: null,
+      select: false,
+    },
+  },
+
+  {
+    timestamps: true,
+  }
+);
 
 /* =====================================================
-   MODEL
+   INDEXES
 ===================================================== */
 
-export const User =
-  mongoose.model<IUser>(
-    "User",
-    userSchema
-  );
+userSchema.index({
+  role: 1,
+  department: 1,
+});
+
+/* =====================================================
+   MODEL REGISTRATION
+===================================================== */
+
+const User: Model<IUser> =
+  (mongoose.models.User as Model<IUser>) ||
+  mongoose.model<IUser>("User", userSchema);
+
+export { User };
+
+export default User;

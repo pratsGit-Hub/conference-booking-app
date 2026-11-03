@@ -1,3 +1,4 @@
+
 import "dotenv/config";
 
 import express from "express";
@@ -15,6 +16,7 @@ import bookingRoutes from "./routes/bookingRoutes.js";
 import adminRoutes from "./routes/adminRoutes.js";
 import notificationRoutes from "./routes/notificationRoutes.js";
 import displayRoutes from "./routes/displayRoutes.js";
+import leaveRoutes from "./routes/leaveRoutes.js";
 
 import { startReminderScheduler } from "./utils/reminderScheduler.js";
 import { verifyEmailConnection } from "./utils/emailService.js";
@@ -25,10 +27,7 @@ import { verifyEmailConnection } from "./utils/emailService.js";
 
 const app = express();
 
-/*
- * Render runs behind a reverse proxy.
- * Configure this before rate limiting.
- */
+// Render runs behind a reverse proxy.
 app.set("trust proxy", 1);
 
 /* =====================================================
@@ -136,22 +135,49 @@ app.use("/api/admin", adminRoutes);
 app.use("/api/notifications", notificationRoutes);
 
 /* =====================================================
+   LEAVE MANAGEMENT
+===================================================== */
+
+/*
+ * EMPLOYEE ROUTES
+ *
+ * GET    /api/leaves/employees/search
+ * GET    /api/leaves/balance
+ * POST   /api/leaves
+ * GET    /api/leaves
+ * GET    /api/leaves/:id
+ * PATCH  /api/leaves/:id/cancel
+ *
+ * FIRST-LEVEL APPROVER ROUTES
+ *
+ * GET    /api/leaves/approvals/first-level
+ * PATCH  /api/leaves/:id/first-level-decision
+ *
+ * ADMIN ROUTES
+ *
+ * GET    /api/leaves/admin/approvals
+ * PATCH  /api/leaves/:id/admin-decision
+ * GET    /api/leaves/admin/history
+ * GET    /api/leaves/admin/tracking
+ *
+ * Authentication is handled inside leaveRoutes.ts.
+ * Admin authorization is checked inside the relevant
+ * controller functions.
+ */
+
+app.use("/api/leaves", leaveRoutes);
+
+/* =====================================================
    PUBLIC OFFICE DISPLAY
 ===================================================== */
 
 /*
- * Public, read-only endpoints:
+ * PUBLIC, READ-ONLY ROUTES
  *
  * GET /api/display/today
  * GET /api/display/rooms
  *
  * No employee or admin login required.
- *
- * /today returns today's non-cancelled bookings.
- * /rooms returns all rooms, including rooms without bookings.
- *
- * Keep this route separate from the protected room-management
- * routes. Do not add authentication middleware here.
  */
 
 app.use("/api/display", displayRoutes);
@@ -193,14 +219,18 @@ app.use(
 
 async function startServer() {
   try {
+    // Connect MongoDB before starting the server.
     await connectDatabase();
 
     console.log("Database connection established.");
 
-    /* EMAIL SERVICE */
+    /* ================================================
+       EMAIL SERVICE
+    ================================================ */
 
     try {
       await verifyEmailConnection();
+
       console.log("Email API verification completed.");
     } catch (emailError) {
       console.error(
@@ -213,23 +243,42 @@ async function startServer() {
       );
     }
 
-    /* BOOKING REMINDERS */
+    /* ================================================
+       BOOKING REMINDER SCHEDULER
+    ================================================ */
 
     startReminderScheduler();
 
     console.log("Booking reminder scheduler started.");
 
-    /* EXPRESS SERVER */
+    /* ================================================
+       EXPRESS SERVER
+    ================================================ */
 
     const server = app.listen(PORT, "0.0.0.0", () => {
+      console.log("----------------------------------------");
+      console.log("Dangote Employee Services API");
+      console.log("----------------------------------------");
+
       console.log(`Server running on port ${PORT}`);
       console.log(`Frontend allowed: ${FRONTEND_URL}`);
-      console.log(
-        "Public display routes: /api/display/today and /api/display/rooms"
-      );
+
+      console.log("Registered API routes:");
+      console.log("  Authentication: /api/auth");
+      console.log("  Users:          /api/users");
+      console.log("  Rooms:          /api/rooms");
+      console.log("  Bookings:       /api/bookings");
+      console.log("  Admin:          /api/admin");
+      console.log("  Notifications:  /api/notifications");
+      console.log("  Leave:          /api/leaves");
+      console.log("  Public Display: /api/display");
+
+      console.log("----------------------------------------");
     });
 
-    /* GRACEFUL SHUTDOWN */
+    /* ================================================
+       GRACEFUL SHUTDOWN
+    ================================================ */
 
     const shutdown = (signal: string) => {
       console.log(
@@ -246,6 +295,7 @@ async function startServer() {
     process.on("SIGTERM", () => shutdown("SIGTERM"));
   } catch (error) {
     console.error("Failed to start server:", error);
+
     process.exit(1);
   }
 }
