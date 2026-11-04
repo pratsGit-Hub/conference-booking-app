@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
@@ -8,11 +9,13 @@ import {
   Clock,
   RefreshCw,
   Search,
-  UserRound,
   XCircle,
   Loader2,
   FileText,
   MessageSquare,
+  UserRound,
+  Mail,
+  Building2,
 } from "lucide-react";
 
 import AuthGuard from "@/components/auth/AuthGuard";
@@ -33,6 +36,18 @@ type EmployeeInfo = {
 
 type LeaveRequest = {
   _id: string;
+
+  // Actual fields from the Leave model
+  employeeId?: string | EmployeeInfo;
+  employeeName?: string;
+  employeeEmail?: string;
+  department?: string;
+
+  // Other possible response formats
+  employee?: EmployeeInfo;
+  user?: EmployeeInfo;
+  applicant?: EmployeeInfo;
+
   leaveType: string;
   startDate: string;
   endDate: string;
@@ -40,10 +55,6 @@ type LeaveRequest = {
   reason: string;
   status: string;
   createdAt?: string;
-
-  employee?: EmployeeInfo;
-  user?: EmployeeInfo;
-  applicant?: EmployeeInfo;
 
   firstLevelStatus?: string;
   firstLevelApproverId?: string;
@@ -54,7 +65,7 @@ type LeaveRequest = {
 type Decision = "ACCEPT" | "DECLINE";
 
 /* =====================================================
-   HELPERS
+   API HELPERS
 ===================================================== */
 
 async function readResponse(response: Response): Promise<any> {
@@ -69,7 +80,10 @@ async function readResponse(response: Response): Promise<any> {
   }
 }
 
-function getErrorMessage(data: any, fallback: string): string {
+function getErrorMessage(
+  data: any,
+  fallback: string
+): string {
   return data?.message || data?.error || fallback;
 }
 
@@ -99,6 +113,10 @@ function extractRequests(data: any): LeaveRequest[] {
   return [];
 }
 
+/* =====================================================
+   DATE HELPER
+===================================================== */
+
 function formatDate(value?: string) {
   if (!value) return "Not available";
 
@@ -115,13 +133,55 @@ function formatDate(value?: string) {
   });
 }
 
+/* =====================================================
+   APPLICANT DETAILS HELPER
+
+   IMPORTANT:
+   Your Leave model stores applicant information as:
+   employeeName
+   employeeEmail
+   employeeId
+   department
+
+   This helper supports both the actual schema and
+   populated employeeId responses.
+===================================================== */
+
 function getApplicant(request: LeaveRequest): EmployeeInfo {
-  return (
-    request.applicant ||
+  const populatedEmployee =
+    request.employeeId &&
+    typeof request.employeeId === "object"
+      ? request.employeeId
+      : undefined;
+
+  const employee =
     request.employee ||
+    request.applicant ||
     request.user ||
-    {}
-  );
+    {};
+
+  return {
+    _id:
+      populatedEmployee?._id ||
+      employee._id,
+
+    name:
+      request.employeeName ||
+      populatedEmployee?.name ||
+      employee.name ||
+      "Employee name unavailable",
+
+    email:
+      request.employeeEmail ||
+      populatedEmployee?.email ||
+      employee.email ||
+      "Email unavailable",
+
+    department:
+      request.department ||
+      populatedEmployee?.department ||
+      employee.department,
+  };
 }
 
 /* =====================================================
@@ -133,9 +193,9 @@ function FirstLevelApprovalsContent() {
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [processingId, setProcessingId] = useState<string | null>(
-    null
-  );
+
+  const [processingId, setProcessingId] =
+    useState<string | null>(null);
 
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -307,6 +367,7 @@ function FirstLevelApprovalsContent() {
       !searchValue ||
       applicant.name?.toLowerCase().includes(searchValue) ||
       applicant.email?.toLowerCase().includes(searchValue) ||
+      applicant.department?.toLowerCase().includes(searchValue) ||
       request.leaveType?.toLowerCase().includes(searchValue)
     );
   });
@@ -319,7 +380,11 @@ function FirstLevelApprovalsContent() {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
         <div className="flex flex-col items-center gap-3">
-          <Loader2 className="animate-spin text-blue-700" size={36} />
+          <Loader2
+            className="animate-spin text-blue-700"
+            size={36}
+          />
+
           <p className="text-sm text-slate-500">
             Loading approval requests...
           </p>
@@ -391,7 +456,7 @@ function FirstLevelApprovalsContent() {
           </div>
         )}
 
-        {/* SUMMARY CARD */}
+        {/* SUMMARY CARDS */}
 
         <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div className="rounded-2xl border border-[#D6E2F5] bg-white p-5 shadow-sm">
@@ -490,15 +555,17 @@ function FirstLevelApprovalsContent() {
 
                       <div className="min-w-0">
                         <h2 className="truncate text-base font-bold text-[#172F60]">
-                          {applicant.name || "Employee"}
+                          {applicant.name}
                         </h2>
 
-                        <p className="truncate text-sm text-slate-500">
-                          {applicant.email || "Email unavailable"}
+                        <p className="flex items-center gap-1.5 truncate text-sm text-slate-500">
+                          <Mail size={14} className="shrink-0" />
+                          {applicant.email}
                         </p>
 
                         {applicant.department && (
-                          <p className="mt-1 text-xs text-slate-400">
+                          <p className="mt-1 flex items-center gap-1.5 text-xs text-slate-400">
+                            <Building2 size={13} />
                             {applicant.department}
                           </p>
                         )}
@@ -626,7 +693,7 @@ function FirstLevelApprovalsContent() {
       </div>
 
       {/* =====================================================
-         DECISION MODAL
+          DECISION MODAL
       ===================================================== */}
 
       {selectedRequest && decision && (
@@ -661,20 +728,40 @@ function FirstLevelApprovalsContent() {
 
             <div className="space-y-4 p-5">
 
+              {/* EMPLOYEE DETAILS */}
+
               <div className="rounded-xl bg-slate-50 p-4">
                 <p className="text-xs font-semibold uppercase text-slate-400">
                   Employee
                 </p>
 
-                <p className="mt-1 font-semibold text-[#172F60]">
-                  {getApplicant(selectedRequest).name || "Employee"}
-                </p>
+                <div className="mt-2 flex items-center gap-2">
+                  <UserRound size={17} className="text-blue-700" />
 
-                <p className="text-sm text-slate-500">
-                  {getApplicant(selectedRequest).email || ""}
-                </p>
+                  <p className="font-semibold text-[#172F60]">
+                    {getApplicant(selectedRequest).name}
+                  </p>
+                </div>
 
-                <p className="mt-3 text-xs font-semibold uppercase text-slate-400">
+                <div className="mt-1 flex items-center gap-2">
+                  <Mail size={16} className="text-slate-400" />
+
+                  <p className="text-sm text-slate-500">
+                    {getApplicant(selectedRequest).email}
+                  </p>
+                </div>
+
+                {getApplicant(selectedRequest).department && (
+                  <div className="mt-1 flex items-center gap-2">
+                    <Building2 size={15} className="text-slate-400" />
+
+                    <p className="text-xs text-slate-500">
+                      {getApplicant(selectedRequest).department}
+                    </p>
+                  </div>
+                )}
+
+                <p className="mt-4 text-xs font-semibold uppercase text-slate-400">
                   Leave Period
                 </p>
 
@@ -683,6 +770,8 @@ function FirstLevelApprovalsContent() {
                   {formatDate(selectedRequest.endDate)}
                 </p>
               </div>
+
+              {/* COMMENT */}
 
               <div>
                 <label
@@ -708,6 +797,8 @@ function FirstLevelApprovalsContent() {
                   {comment.length}/1000
                 </p>
               </div>
+
+              {/* MODAL BUTTONS */}
 
               <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row sm:justify-end">
                 <button

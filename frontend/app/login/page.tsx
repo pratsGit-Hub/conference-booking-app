@@ -20,7 +20,6 @@ const API_URL =
 
 const ALLOWED_EMAIL_DOMAIN = "@dangote.com";
 
-// Both ADMIN and EMPLOYEE must land on this page.
 const DEFAULT_LOGIN_REDIRECT = "/services";
 
 // =====================================================
@@ -65,10 +64,6 @@ export default function LoginPage() {
       .trim()
       .toLowerCase();
 
-    // -------------------------------------------------
-    // VALIDATE EMAIL
-    // -------------------------------------------------
-
     if (!normalizedEmail) {
       setError("Please enter your work email address.");
       return;
@@ -80,10 +75,6 @@ export default function LoginPage() {
       );
       return;
     }
-
-    // -------------------------------------------------
-    // VALIDATE PASSWORD
-    // -------------------------------------------------
 
     if (!formData.password) {
       setError("Please enter your password.");
@@ -101,13 +92,10 @@ export default function LoginPage() {
         `${API_URL}/api/auth/login`,
         {
           method: "POST",
-
           headers: {
             "Content-Type": "application/json",
           },
-
           credentials: "include",
-
           body: JSON.stringify({
             email: normalizedEmail,
             password: formData.password,
@@ -132,11 +120,8 @@ export default function LoginPage() {
         `${API_URL}/api/auth/me`,
         {
           method: "GET",
-
           credentials: "include",
-
           cache: "no-store",
-
           headers: {
             "Content-Type": "application/json",
           },
@@ -191,19 +176,6 @@ export default function LoginPage() {
       console.log("Authenticated role:", userRole);
       console.log("Redirecting to:", DEFAULT_LOGIN_REDIRECT);
 
-      /*
-       * IMPORTANT:
-       *
-       * ADMIN    -> /services
-       * EMPLOYEE -> /services
-       *
-       * Do not redirect admins to /admin or /dashboard
-       * automatically after login.
-       *
-       * The user can choose Conference Room Booking
-       * or Leave Management from the Services page.
-       */
-
       window.location.replace(DEFAULT_LOGIN_REDIRECT);
 
     } catch (error) {
@@ -231,9 +203,13 @@ export default function LoginPage() {
 
         <section className="relative hidden overflow-hidden bg-[#10275F] lg:flex">
 
+          {/* BACKGROUND CIRCLES */}
+
           <div className="absolute -left-32 -top-32 h-[500px] w-[500px] rounded-full bg-[#0A1F4D]" />
 
           <div className="absolute -bottom-40 -right-40 h-[600px] w-[600px] rounded-full bg-[#0B2151]" />
+
+          {/* RED LEFT BORDER */}
 
           <div className="absolute left-0 top-0 h-full w-1 bg-[#E83B32]" />
 
@@ -251,17 +227,32 @@ export default function LoginPage() {
 
             {/* MAIN MESSAGE */}
 
-            <div className="max-w-md">
+            <div className="w-full max-w-none">
 
               <div className="mb-6 h-1 w-14 bg-[#E83B32]" />
 
-              <h2 className="text-5xl font-bold leading-[1.05] tracking-tight text-white xl:text-6xl">
-                Book.
-                <br />
-                Meet.
-                <br />
-                Achieve.
+              {/* TWO-LINE RESPONSIVE HEADLINE */}
+
+              <h2
+                className="
+                  w-full
+                  text-[clamp(1.25rem,2.35vw,2.5rem)]
+                  font-bold
+                  leading-[1.2]
+                  tracking-tight
+                  text-white
+                "
+              >
+                <span className="block whitespace-nowrap">
+                  Empowering Every Employee.
+                </span>
+
+                <span className="block whitespace-nowrap">
+                  Connecting Every Service.
+                </span>
               </h2>
+
+              {/* SUPPORTING TEXT */}
 
               <p className="mt-7 max-w-sm text-lg leading-8 text-blue-100/80">
                 Manage your conference rooms,
