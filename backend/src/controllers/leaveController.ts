@@ -10,6 +10,7 @@ import Leave, {
 
 import LeaveBalance from "../models/LeaveBalance";
 import User from "../models/User";
+import LeaveActivityLog from "../models/LeaveActivityLog";
 
 /* =====================================================
    AUTHENTICATED USER TYPES
@@ -304,6 +305,47 @@ const syncEmployeeBalances = async (
 };
 
 /* =====================================================
+   CREATE SHARED LEAVE ACTIVITY
+===================================================== */
+
+const createLeaveActivity = async (data: {
+  actor: EmployeeIdentity;
+  employeeId: Types.ObjectId;
+  employeeName: string;
+  employeeEmail: string;
+  activityType:
+    | "BALANCE_ADDED"
+    | "BALANCE_REDUCED"
+    | "FIRST_LEVEL_ACCEPTED"
+    | "FIRST_LEVEL_DECLINED"
+    | "ADMIN_APPROVED"
+    | "ADMIN_REJECTED";
+  leaveType?: string;
+  leaveRequestId?: Types.ObjectId;
+  days?: number;
+  previousEntitlement?: number;
+  newEntitlement?: number;
+}): Promise<void> => {
+  await LeaveActivityLog.create({
+    actorId: data.actor.employeeId,
+    actorName: data.actor.employeeName,
+    actorEmail: data.actor.employeeEmail,
+    actorRole: data.actor.role,
+
+    employeeId: data.employeeId,
+    employeeName: data.employeeName,
+    employeeEmail: data.employeeEmail,
+
+    activityType: data.activityType,
+    leaveType: data.leaveType,
+    leaveRequestId: data.leaveRequestId,
+    days: data.days,
+    previousEntitlement: data.previousEntitlement,
+    newEntitlement: data.newEntitlement,
+  });
+};
+
+/* =====================================================
    1. SEARCH REGISTERED EMPLOYEES
 ===================================================== */
 
@@ -493,7 +535,6 @@ export const createLeaveRequest = async (
       return;
     }
 
-    // Verify that the selected approver is registered.
     const firstLevelApprover = await User.findOne({
       email: approverEmail,
       role: { $in: ["ADMIN", "EMPLOYEE"] },
@@ -887,6 +928,11 @@ export const getMyLeaveBalance = async (
       return;
     }
 
+    await syncEmployeeBalances(
+      employee.employeeId,
+      requestedYear
+    );
+
     const balances = await LeaveBalance.find({
       employeeId: employee.employeeId,
       year: requestedYear,
@@ -905,19 +951,7 @@ export const getMyLeaveBalance = async (
       return;
     }
 
-    await syncEmployeeBalances(
-      employee.employeeId,
-      requestedYear
-    );
-
-    const updatedBalances = await LeaveBalance.find({
-      employeeId: employee.employeeId,
-      year: requestedYear,
-    }).sort({
-      leaveType: 1,
-    });
-
-    const breakdown = updatedBalances.map((balance) => {
+    const breakdown = balances.map((balance) => {
       const availableDays = Math.max(
         0,
         balance.entitlement - balance.approvedDays
@@ -979,7 +1013,284 @@ export const getMyLeaveBalance = async (
 };
 
 /* =====================================================
-   7. GET REQUESTS ASSIGNED TO FIRST-LEVEL APPROVER
+   7. ADMIN: ADJUST EMPLOYEE LEAVE BALANCE
+===================================================== */
+
+/**
+ * PATCH /api/leaves/admin/balance-adjustment
+ *
+ * Body:
+ * {
+ *   employeeId: string,
+ *   leaveType: string,
+ *   year: number,
+ *   action: "ADD" | "REDUCE",
+ *   days: number
+ * }
+ *
+ * Only ADMIN users can adjust balances.
+ * One employee is adjusted per request.
+ * Days must be in increments of 0.5.
+ * No adjustment reason is required.
+ */
+
+export const adjustEmployeeLeaveBalance = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const admin = await getAuthenticatedEmployee(req);
+
+    if (!admin) {
+      res.status(401).json({
+        success: false,
+        message: "Authentication required.",
+      });
+      return;
+    }
+
+    if (!requireAdmin(admin, res)) return;
+
+    const {
+      employeeId,
+      leaveType,
+      year,
+      action,
+      days,
+    } = req.body || {};
+
+    // Validate employee ID.
+    if (
+      typeof employeeId !== "string" ||
+      !Types.ObjectId.isValid(employeeId)
+    ) {
+      res.status(400).json({
+        success: false,
+        message: "Please select a valid employee.",
+      });
+      return;
+    }
+
+    // Validate leave type.
+    if (!isValidLeaveType(leaveType)) {
+      res.status(400).json({
+        success: false,
+        message: "Please select a valid leave type.",
+        supportedLeaveTypes: LEAVE_TYPES,
+      });
+      return;
+    }
+
+    // Validate year.
+    const adjustmentYear =
+      year === undefined
+        ? new Date().getFullYear()
+        : Number(year);
+
+    if (
+      !Number.isInteger(adjustmentYear) ||
+      adjustmentYear < 2000 ||
+      adjustmentYear > 2200
+    ) {
+      res.status(400).json({
+        success: false,
+        message: "Please provide a valid leave year.",
+      });
+      return;
+    }
+
+    // Validate operation.
+    if (action !== "ADD" && action !== "REDUCE") {
+      res.status(400).json({
+        success: false,
+        message: "Action must be ADD or REDUCE.",
+      });
+      return;
+    }
+
+    // Validate adjustment days.
+    const adjustmentDays = Number(days);
+
+    if (
+      !Number.isFinite(adjustmentDays) ||
+      adjustmentDays <= 0 ||
+      !Number.isInteger(adjustmentDays * 2)
+    ) {
+      res.status(400).json({
+        success: false,
+        message:
+          "Adjustment days must be positive and use increments of 0.5.",
+      });
+      return;
+    }
+
+    // Retrieve employee from database.
+    const targetEmployee = await User.findOne({
+      _id: employeeId,
+      role: "EMPLOYEE",
+    })
+      .select("name email department role")
+      .lean();
+
+    if (!targetEmployee) {
+      res.status(404).json({
+        success: false,
+        message: "Employee not found.",
+      });
+      return;
+    }
+
+    const targetEmployeeId = new Types.ObjectId(employeeId);
+
+    // Synchronize approved and pending leave usage first.
+    await syncEmployeeBalances(
+      targetEmployeeId,
+      adjustmentYear
+    );
+
+    let balance = await LeaveBalance.findOne({
+      employeeId: targetEmployeeId,
+      leaveType,
+      year: adjustmentYear,
+    });
+
+    // A balance record can be created only through ADD.
+    if (!balance && action === "REDUCE") {
+      res.status(404).json({
+        success: false,
+        message:
+          "No leave balance exists for this employee and leave type.",
+      });
+      return;
+    }
+
+    const previousEntitlement = balance
+      ? balance.entitlement
+      : 0;
+
+    const approvedDays = balance
+      ? balance.approvedDays
+      : 0;
+
+    let newEntitlement: number;
+
+    if (action === "ADD") {
+      newEntitlement =
+        previousEntitlement + adjustmentDays;
+    } else {
+      newEntitlement =
+        previousEntitlement - adjustmentDays;
+
+      // Protect already approved leave.
+      if (newEntitlement < approvedDays) {
+        res.status(400).json({
+          success: false,
+          message:
+            "Cannot reduce entitlement below the employee's already approved leave days.",
+          currentEntitlement: previousEntitlement,
+          approvedDays,
+          maximumReduction: Math.max(
+            0,
+            previousEntitlement - approvedDays
+          ),
+        });
+        return;
+      }
+    }
+
+    if (newEntitlement < 0) {
+      res.status(400).json({
+        success: false,
+        message: "Leave entitlement cannot become negative.",
+      });
+      return;
+    }
+
+    // Create a new record for an ADD operation if necessary.
+    if (!balance) {
+      balance = new LeaveBalance({
+        employeeId: targetEmployeeId,
+        leaveType,
+        year: adjustmentYear,
+        entitlement: newEntitlement,
+        approvedDays: 0,
+        pendingDays: 0,
+      });
+    } else {
+      balance.entitlement = newEntitlement;
+    }
+
+    await balance.save();
+
+    // Save immutable activity record.
+    await createLeaveActivity({
+      actor: admin,
+
+      employeeId: targetEmployeeId,
+      employeeName: targetEmployee.name,
+      employeeEmail: targetEmployee.email,
+
+      activityType:
+        action === "ADD"
+          ? "BALANCE_ADDED"
+          : "BALANCE_REDUCED",
+
+      leaveType,
+      days: adjustmentDays,
+      previousEntitlement,
+      newEntitlement,
+    });
+
+    res.status(200).json({
+      success: true,
+      message:
+        action === "ADD"
+          ? "Leave balance increased successfully."
+          : "Leave balance reduced successfully.",
+
+      adjustment: {
+        employee: {
+          id: targetEmployeeId,
+          name: targetEmployee.name,
+          email: targetEmployee.email,
+        },
+        leaveType,
+        year: adjustmentYear,
+        action,
+        days: adjustmentDays,
+        previousEntitlement,
+        newEntitlement,
+        approvedDays: balance.approvedDays,
+        pendingDays: balance.pendingDays,
+        availableDays: Math.max(
+          0,
+          newEntitlement - balance.approvedDays
+        ),
+      },
+    });
+  } catch (error: unknown) {
+    console.error("Leave balance adjustment error:", error);
+
+    if (error instanceof mongoose.Error.ValidationError) {
+      res.status(400).json({
+        success: false,
+        message: "Leave balance validation failed.",
+        errors: Object.values(error.errors).map(
+          (item) => item.message
+        ),
+      });
+      return;
+    }
+
+    res.status(500).json({
+      success: false,
+      message: "Unable to adjust employee leave balance.",
+    });
+  }
+};
+
+/* =====================================================
+   8. GET REQUESTS ASSIGNED TO FIRST-LEVEL APPROVER
 ===================================================== */
 
 /**
@@ -1025,7 +1336,7 @@ export const getFirstLevelApprovalRequests = async (
 };
 
 /* =====================================================
-   8. FIRST-LEVEL ACCEPT OR DECLINE
+   9. FIRST-LEVEL ACCEPT OR DECLINE
 ===================================================== */
 
 /**
@@ -1141,10 +1452,29 @@ export const submitFirstLevelDecision = async (
 
     await request.save();
 
+    // Synchronize the employee's leave balance.
     await syncEmployeeBalances(
       request.employeeId,
       request.startDate.getUTCFullYear()
     );
+
+    // Record the first-level decision in the shared activity log.
+    await createLeaveActivity({
+      actor: employee,
+
+      employeeId: request.employeeId,
+      employeeName: request.employeeName,
+      employeeEmail: request.employeeEmail,
+
+      activityType:
+        decision === "ACCEPT"
+          ? "FIRST_LEVEL_ACCEPTED"
+          : "FIRST_LEVEL_DECLINED",
+
+      leaveType: request.leaveType,
+      leaveRequestId: request._id,
+      days: request.days,
+    });
 
     res.status(200).json({
       success: true,
@@ -1165,7 +1495,7 @@ export const submitFirstLevelDecision = async (
 };
 
 /* =====================================================
-   9. ADMIN: GET FINAL APPROVAL QUEUE
+   10. ADMIN: GET FINAL APPROVAL QUEUE
 ===================================================== */
 
 /**
@@ -1224,7 +1554,7 @@ export const getAdminApprovalRequests = async (
 };
 
 /* =====================================================
-   10. ADMIN: FINAL APPROVE OR REJECT
+   11. ADMIN: FINAL APPROVE OR REJECT
 ===================================================== */
 
 /**
@@ -1340,6 +1670,24 @@ export const submitAdminDecision = async (
       request.startDate.getUTCFullYear()
     );
 
+    // Record the final admin decision in the shared activity log.
+    await createLeaveActivity({
+      actor: admin,
+
+      employeeId: request.employeeId,
+      employeeName: request.employeeName,
+      employeeEmail: request.employeeEmail,
+
+      activityType:
+        decision === "APPROVE"
+          ? "ADMIN_APPROVED"
+          : "ADMIN_REJECTED",
+
+      leaveType: request.leaveType,
+      leaveRequestId: request._id,
+      days: request.days,
+    });
+
     res.status(200).json({
       success: true,
       message:
@@ -1359,7 +1707,7 @@ export const submitAdminDecision = async (
 };
 
 /* =====================================================
-   11. ADMIN: APPROVAL HISTORY
+   12. ADMIN: APPROVAL HISTORY
 ===================================================== */
 
 /**
@@ -1431,7 +1779,7 @@ export const getAdminApprovalHistory = async (
 };
 
 /* =====================================================
-   12. ADMIN: APPROVAL TRACKING
+   13. ADMIN: APPROVAL TRACKING
 ===================================================== */
 
 /**
@@ -1486,6 +1834,229 @@ export const getAdminApprovalTracking = async (
     res.status(500).json({
       success: false,
       message: "Unable to retrieve approval tracking.",
+    });
+  }
+};
+
+/* =====================================================
+   14. ADMIN: SHARED LEAVE ACTIVITY LOG
+===================================================== */
+
+/**
+ * GET /api/leaves/admin/activity-log
+ *
+ * Available filters:
+ *
+ * ?employeeId=...
+ * ?actorId=...
+ * ?activityType=...
+ * ?startDate=2026-01-01
+ * ?endDate=2026-12-31
+ * ?page=1
+ * ?limit=20
+ *
+ * Only administrators can access this endpoint.
+ *
+ * All administrators see the same shared activity records.
+ */
+
+export const getLeaveActivityLog = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const admin = await getAuthenticatedEmployee(req);
+
+    if (!admin) {
+      res.status(401).json({
+        success: false,
+        message: "Authentication required.",
+      });
+      return;
+    }
+
+    if (!requireAdmin(admin, res)) return;
+
+    /* ---------------------------------------------
+       PAGINATION
+    --------------------------------------------- */
+
+    const page = Number(req.query.page || 1);
+    const limit = Number(req.query.limit || 20);
+
+    if (
+      !Number.isInteger(page) ||
+      page < 1 ||
+      !Number.isInteger(limit) ||
+      limit < 1 ||
+      limit > 100
+    ) {
+      res.status(400).json({
+        success: false,
+        message: "Invalid pagination values.",
+      });
+      return;
+    }
+
+    const skip = (page - 1) * limit;
+
+    /* ---------------------------------------------
+       BUILD ACTIVITY FILTERS
+    --------------------------------------------- */
+
+    const filters: Record<string, unknown> = {};
+
+    // Filter by employee.
+    if (req.query.employeeId) {
+      const employeeId = String(req.query.employeeId);
+
+      if (!Types.ObjectId.isValid(employeeId)) {
+        res.status(400).json({
+          success: false,
+          message: "Invalid employee ID.",
+        });
+        return;
+      }
+
+      filters.employeeId = new Types.ObjectId(employeeId);
+    }
+
+    // Filter by admin who performed the action.
+    if (req.query.actorId) {
+      const actorId = String(req.query.actorId);
+
+      if (!Types.ObjectId.isValid(actorId)) {
+        res.status(400).json({
+          success: false,
+          message: "Invalid admin ID.",
+        });
+        return;
+      }
+
+      filters.actorId = new Types.ObjectId(actorId);
+    }
+
+    // Filter by activity type.
+    const allowedActivityTypes = [
+      "BALANCE_ADDED",
+      "BALANCE_REDUCED",
+      "FIRST_LEVEL_ACCEPTED",
+      "FIRST_LEVEL_DECLINED",
+      "ADMIN_APPROVED",
+      "ADMIN_REJECTED",
+    ];
+
+    if (req.query.activityType) {
+      const activityType = String(req.query.activityType);
+
+      if (!allowedActivityTypes.includes(activityType)) {
+        res.status(400).json({
+          success: false,
+          message: "Invalid activity type.",
+          supportedActivityTypes: allowedActivityTypes,
+        });
+        return;
+      }
+
+      filters.activityType = activityType;
+    }
+
+    /* ---------------------------------------------
+       FILTER BY DATE
+    --------------------------------------------- */
+
+    const dateFilter: {
+      $gte?: Date;
+      $lt?: Date;
+    } = {};
+
+    if (req.query.startDate) {
+      const startDate = parseDate(req.query.startDate);
+
+      if (!startDate) {
+        res.status(400).json({
+          success: false,
+          message: "Invalid start date. Use YYYY-MM-DD.",
+        });
+        return;
+      }
+
+      dateFilter.$gte = startDate;
+    }
+
+    if (req.query.endDate) {
+      const endDate = parseDate(req.query.endDate);
+
+      if (!endDate) {
+        res.status(400).json({
+          success: false,
+          message: "Invalid end date. Use YYYY-MM-DD.",
+        });
+        return;
+      }
+
+      dateFilter.$lt = new Date(
+        endDate.getTime() + 24 * 60 * 60 * 1000
+      );
+    }
+
+    if (
+      dateFilter.$gte &&
+      dateFilter.$lt &&
+      dateFilter.$gte >= dateFilter.$lt
+    ) {
+      res.status(400).json({
+        success: false,
+        message: "Start date cannot be after end date.",
+      });
+      return;
+    }
+
+    if (
+      dateFilter.$gte ||
+      dateFilter.$lt
+    ) {
+      filters.createdAt = dateFilter;
+    }
+
+    /* ---------------------------------------------
+       FETCH ACTIVITY RECORDS
+    --------------------------------------------- */
+
+    const [activities, total] = await Promise.all([
+      LeaveActivityLog.find(filters)
+        .sort({
+          createdAt: -1,
+        })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+
+      LeaveActivityLog.countDocuments(filters),
+    ]);
+
+    res.status(200).json({
+      success: true,
+
+      count: activities.length,
+      total,
+
+      pagination: {
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+        hasNextPage: skip + activities.length < total,
+        hasPreviousPage: page > 1,
+      },
+
+      activities,
+    });
+  } catch (error: unknown) {
+    console.error("Leave activity log error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Unable to retrieve leave activity log.",
     });
   }
 };

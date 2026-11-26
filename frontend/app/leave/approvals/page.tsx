@@ -23,6 +23,8 @@ import AuthGuard from "@/components/auth/AuthGuard";
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:5001";
 
+const AUTO_REFRESH_INTERVAL = 30_000;
+
 /* =====================================================
    TYPES
 ===================================================== */
@@ -37,13 +39,11 @@ type EmployeeInfo = {
 type LeaveRequest = {
   _id: string;
 
-  // Actual fields from the Leave model
   employeeId?: string | EmployeeInfo;
   employeeName?: string;
   employeeEmail?: string;
   department?: string;
 
-  // Other possible response formats
   employee?: EmployeeInfo;
   user?: EmployeeInfo;
   applicant?: EmployeeInfo;
@@ -64,31 +64,44 @@ type LeaveRequest = {
 
 type Decision = "ACCEPT" | "DECLINE";
 
+type ApiResponse = {
+  success?: boolean;
+  message?: string;
+  error?: string;
+  requests?: LeaveRequest[];
+  leaves?: LeaveRequest[];
+  data?: unknown;
+};
+
 /* =====================================================
    API HELPERS
 ===================================================== */
 
-async function readResponse(response: Response): Promise<any> {
+async function readResponse(
+  response: Response
+): Promise<ApiResponse> {
   const text = await response.text();
 
   if (!text) return {};
 
   try {
-    return JSON.parse(text);
+    return JSON.parse(text) as ApiResponse;
   } catch {
     return { message: text };
   }
 }
 
 function getErrorMessage(
-  data: any,
+  data: ApiResponse,
   fallback: string
 ): string {
   return data?.message || data?.error || fallback;
 }
 
-function extractRequests(data: any): LeaveRequest[] {
-  if (Array.isArray(data)) return data;
+function extractRequests(data: ApiResponse): LeaveRequest[] {
+  if (Array.isArray(data)) {
+    return data as unknown as LeaveRequest[];
+  }
 
   if (Array.isArray(data?.requests)) {
     return data.requests;
@@ -99,25 +112,27 @@ function extractRequests(data: any): LeaveRequest[] {
   }
 
   if (Array.isArray(data?.data)) {
-    return data.data;
+    return data.data as LeaveRequest[];
   }
 
-  if (Array.isArray(data?.data?.requests)) {
-    return data.data.requests;
+  const nested = data?.data as ApiResponse | undefined;
+
+  if (Array.isArray(nested?.requests)) {
+    return nested.requests;
   }
 
-  if (Array.isArray(data?.data?.leaves)) {
-    return data.data.leaves;
+  if (Array.isArray(nested?.leaves)) {
+    return nested.leaves;
   }
 
   return [];
 }
 
 /* =====================================================
-   DATE HELPER
+   FORMAT HELPERS
 ===================================================== */
 
-function formatDate(value?: string) {
+function formatDate(value?: string): string {
   if (!value) return "Not available";
 
   const date = new Date(value);
@@ -133,19 +148,18 @@ function formatDate(value?: string) {
   });
 }
 
-/* =====================================================
-   APPLICANT DETAILS HELPER
+function formatDays(value?: number): string {
+  if (
+    typeof value !== "number" ||
+    !Number.isFinite(value)
+  ) {
+    return "—";
+  }
 
-   IMPORTANT:
-   Your Leave model stores applicant information as:
-   employeeName
-   employeeEmail
-   employeeId
-   department
-
-   This helper supports both the actual schema and
-   populated employeeId responses.
-===================================================== */
+  return Number.isInteger(value)
+    ? String(value)
+    : value.toFixed(1);
+}
 
 function getApplicant(request: LeaveRequest): EmployeeInfo {
   const populatedEmployee =
@@ -213,13 +227,15 @@ function FirstLevelApprovalsContent() {
   ===================================================== */
 
   const fetchRequests = useCallback(
-    async (showRefresh = false) => {
+    async (showRefresh = false, silent = false) => {
       try {
-        setError("");
+        if (!silent) {
+          setError("");
+        }
 
         if (showRefresh) {
           setRefreshing(true);
-        } else {
+        } else if (!silent) {
           setLoading(true);
         }
 
@@ -248,21 +264,38 @@ function FirstLevelApprovalsContent() {
 
         setRequests(extractRequests(data));
       } catch (err) {
-        setError(
-          err instanceof Error
-            ? err.message
-            : "Unable to load approval requests."
-        );
+        if (!silent) {
+          setError(
+            err instanceof Error
+              ? err.message
+              : "Unable to load approval requests."
+          );
+        }
       } finally {
-        setLoading(false);
+        if (!silent) {
+          setLoading(false);
+        }
+
         setRefreshing(false);
       }
     },
     []
   );
 
+  /* =====================================================
+     INITIAL LOAD AND AUTOMATIC REFRESH
+  ===================================================== */
+
   useEffect(() => {
-    fetchRequests();
+    void fetchRequests();
+
+    const interval = window.setInterval(() => {
+      void fetchRequests(false, true);
+    }, AUTO_REFRESH_INTERVAL);
+
+    return () => {
+      window.clearInterval(interval);
+    };
   }, [fetchRequests]);
 
   /* =====================================================
@@ -333,7 +366,7 @@ function FirstLevelApprovalsContent() {
           : "Leave request declined successfully."
       );
 
-      // Remove the completed request from the pending list.
+      // Remove completed request from the pending list.
       setRequests((current) =>
         current.filter(
           (request) => request._id !== selectedRequest._id
@@ -343,6 +376,9 @@ function FirstLevelApprovalsContent() {
       setSelectedRequest(null);
       setDecision(null);
       setComment("");
+
+      // Refresh from backend to ensure the list is current.
+      void fetchRequests(false, true);
     } catch (err) {
       setError(
         err instanceof Error
@@ -358,10 +394,10 @@ function FirstLevelApprovalsContent() {
      FILTER REQUESTS
   ===================================================== */
 
+  const searchValue = search.toLowerCase().trim();
+
   const filteredRequests = requests.filter((request) => {
     const applicant = getApplicant(request);
-
-    const searchValue = search.toLowerCase().trim();
 
     return (
       !searchValue ||
@@ -416,11 +452,15 @@ function FirstLevelApprovalsContent() {
             <p className="mt-2 text-sm text-slate-600 sm:text-base">
               Review leave requests assigned to you as the first-level approver.
             </p>
+
+            <p className="mt-1 text-xs text-slate-400">
+              Requests automatically refresh every 30 seconds.
+            </p>
           </div>
 
           <button
             type="button"
-            onClick={() => fetchRequests(true)}
+            onClick={() => void fetchRequests(true)}
             disabled={refreshing}
             className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-[#D6E2F5] bg-white px-4 text-sm font-semibold text-[#172F60] shadow-sm transition hover:bg-blue-50 disabled:opacity-60"
           >
@@ -581,7 +621,6 @@ function FirstLevelApprovalsContent() {
                   {/* CARD BODY */}
 
                   <div className="grid grid-cols-1 gap-5 p-5 sm:grid-cols-2 lg:grid-cols-3 sm:p-6">
-
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
                         Leave Type
@@ -620,8 +659,10 @@ function FirstLevelApprovalsContent() {
                       </p>
 
                       <p className="mt-2 text-sm font-semibold text-slate-800">
-                        {request.days ?? "—"}{" "}
-                        {request.days === 1 ? "day" : "days"}
+                        {formatDays(request.days)}{" "}
+                        {request.days === 0.5 || request.days === 1
+                          ? "day"
+                          : "days"}
                       </p>
                     </div>
 
@@ -697,12 +738,22 @@ function FirstLevelApprovalsContent() {
       ===================================================== */}
 
       {selectedRequest && decision && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/50 p-4">
-          <div className="w-full max-w-lg overflow-hidden rounded-2xl bg-white shadow-2xl">
-
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/50 p-4"
+          role="presentation"
+        >
+          <div
+            className="w-full max-w-lg overflow-hidden rounded-2xl bg-white shadow-2xl"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="decision-modal-title"
+          >
             <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
               <div>
-                <h2 className="text-lg font-bold text-[#172F60]">
+                <h2
+                  id="decision-modal-title"
+                  className="text-lg font-bold text-[#172F60]"
+                >
                   {decision === "ACCEPT"
                     ? "Accept Leave Request"
                     : "Decline Leave Request"}
@@ -727,7 +778,6 @@ function FirstLevelApprovalsContent() {
             </div>
 
             <div className="space-y-4 p-5">
-
               {/* EMPLOYEE DETAILS */}
 
               <div className="rounded-xl bg-slate-50 p-4">
@@ -768,6 +818,10 @@ function FirstLevelApprovalsContent() {
                 <p className="mt-1 text-sm font-medium text-slate-700">
                   {formatDate(selectedRequest.startDate)} –{" "}
                   {formatDate(selectedRequest.endDate)}
+                </p>
+
+                <p className="mt-2 text-sm font-medium text-slate-700">
+                  Duration: {formatDays(selectedRequest.days)} days
                 </p>
               </div>
 

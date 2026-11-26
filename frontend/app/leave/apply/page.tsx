@@ -31,8 +31,11 @@ const API_BASE_URL =
    TYPES
 ========================================== */
 
+type LeaveDuration = "FULL_DAY" | "HALF_DAY";
+
 type LeaveForm = {
   leaveType: string;
+  leaveDuration: LeaveDuration;
   startDate: string;
   endDate: string;
   reason: string;
@@ -56,6 +59,7 @@ type ApiResponse = {
 
 const initialForm: LeaveForm = {
   leaveType: "",
+  leaveDuration: "FULL_DAY",
   startDate: "",
   endDate: "",
   reason: "",
@@ -160,7 +164,6 @@ function normalizeEmployees(items: unknown[]): Employee[] {
     const email = candidate.email.trim();
     const normalizedEmail = email.toLowerCase();
 
-    // Remove duplicate employees based on email.
     if (seenEmails.has(normalizedEmail)) {
       continue;
     }
@@ -172,7 +175,6 @@ function normalizeEmployees(items: unknown[]): Employee[] {
           ? candidate.id.trim()
           : "";
 
-    // Use email if the API does not provide an ID.
     const baseKey = rawId || normalizedEmail;
 
     const uniqueKey = seenKeys.has(baseKey)
@@ -376,10 +378,27 @@ function LeaveApplyContent() {
     field: K,
     value: LeaveForm[K]
   ) {
-    setForm((current) => ({
-      ...current,
-      [field]: value,
-    }));
+    setForm((current) => {
+      const next = { ...current, [field]: value };
+
+      // Half-day leave is restricted to one date.
+      if (
+        next.leaveDuration === "HALF_DAY" &&
+        field === "startDate"
+      ) {
+        next.endDate = value as string;
+      }
+
+      // When switching to half day, match the end date.
+      if (
+        field === "leaveDuration" &&
+        value === "HALF_DAY"
+      ) {
+        next.endDate = next.startDate;
+      }
+
+      return next;
+    });
 
     setErrorMessage("");
     setSuccessMessage("");
@@ -415,6 +434,11 @@ function LeaveApplyContent() {
     setSearchError("");
   }
 
+  /* ==========================================
+     CALCULATE LEAVE DAYS
+     EXCLUDE SATURDAYS AND SUNDAYS
+  ========================================== */
+
   function calculateLeaveDays(): number {
     if (!form.startDate || !form.endDate) {
       return 0;
@@ -425,16 +449,40 @@ function LeaveApplyContent() {
 
     if (
       Number.isNaN(start.getTime()) ||
-      Number.isNaN(end.getTime())
+      Number.isNaN(end.getTime()) ||
+      end < start
     ) {
       return 0;
     }
 
-    return (
-      Math.floor(
-        (end.getTime() - start.getTime()) / 86400000
-      ) + 1
-    );
+    // Half-day leave: 0.5 on weekdays only.
+    if (form.leaveDuration === "HALF_DAY") {
+      const weekday = start.getDay();
+
+      // Sunday = 0, Saturday = 6
+      if (weekday === 0 || weekday === 6) {
+        return 0;
+      }
+
+      return 0.5;
+    }
+
+    // Full-day leave: count weekdays only.
+    let workingDays = 0;
+    const currentDate = new Date(start);
+
+    while (currentDate <= end) {
+      const weekday = currentDate.getDay();
+
+      // Monday to Friday only.
+      if (weekday !== 0 && weekday !== 6) {
+        workingDays++;
+      }
+
+      currentDate.setDate(currentDate.getDate() + 1);
+    }
+
+    return workingDays;
   }
 
   /* ==========================================
@@ -469,6 +517,26 @@ function LeaveApplyContent() {
     if (form.endDate < form.startDate) {
       setErrorMessage(
         "The end date cannot be before the start date."
+      );
+      return;
+    }
+
+    if (
+      form.leaveDuration === "HALF_DAY" &&
+      form.startDate !== form.endDate
+    ) {
+      setErrorMessage(
+        "Half-day leave can only be requested for a single date."
+      );
+      return;
+    }
+
+    // Validate the calculated working-day duration.
+    const requestedDays = calculateLeaveDays();
+
+    if (requestedDays <= 0) {
+      setErrorMessage(
+        "Your selected dates contain no working days. Please select a weekday. Saturdays and Sundays are not counted as leave days."
       );
       return;
     }
@@ -516,12 +584,13 @@ function LeaveApplyContent() {
           },
           body: JSON.stringify({
             leaveType: form.leaveType,
+            leaveDuration: form.leaveDuration,
             startDate: form.startDate,
             endDate: form.endDate,
             reason: form.reason.trim(),
-            days: calculateLeaveDays(),
+            days: requestedDays,
 
-            // Required by the updated backend controller.
+            // First-level approver.
             firstLevelApproverEmail: selectedApprover.email,
           }),
         }
@@ -751,7 +820,7 @@ function LeaveApplyContent() {
                 </h2>
 
                 <p className="mt-1 text-xs leading-5 text-slate-500 sm:text-sm">
-                  Select your leave type and the dates you need off.
+                  Select your leave type, duration and the dates you need off.
                 </p>
               </div>
             </div>
@@ -787,6 +856,97 @@ function LeaveApplyContent() {
                   <option value="Unpaid Leave">Unpaid Leave</option>
                   <option value="Other">Other</option>
                 </select>
+              </div>
+
+              {/* LEAVE DURATION */}
+
+              <div>
+                <label className="mb-2 block text-sm font-semibold text-slate-700">
+                  Leave Duration <span className="text-red-500">*</span>
+                </label>
+
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+
+                  {/* FULL DAY OPTION */}
+
+                  <button
+                    type="button"
+                    aria-pressed={form.leaveDuration === "FULL_DAY"}
+                    onClick={() =>
+                      updateField("leaveDuration", "FULL_DAY")
+                    }
+                    className={`rounded-xl border p-4 text-left transition ${
+                      form.leaveDuration === "FULL_DAY"
+                        ? "border-blue-600 bg-blue-50 ring-2 ring-blue-100"
+                        : "border-[#D6E2F5] bg-white hover:bg-slate-50"
+                    }`}
+                  >
+                    <span className="flex items-center gap-2">
+                      <span
+                        className={`flex h-5 w-5 items-center justify-center rounded-full border ${
+                          form.leaveDuration === "FULL_DAY"
+                            ? "border-blue-600"
+                            : "border-slate-300"
+                        }`}
+                      >
+                        {form.leaveDuration === "FULL_DAY" && (
+                          <span className="h-2.5 w-2.5 rounded-full bg-blue-600" />
+                        )}
+                      </span>
+
+                      <span className="text-sm font-bold text-[#172F60]">
+                        Full Day
+                      </span>
+                    </span>
+
+                    <span className="mt-2 block pl-7 text-xs leading-5 text-slate-500">
+                      Leave for the complete working day. Multiple dates are allowed.
+                    </span>
+                  </button>
+
+                  {/* HALF DAY OPTION */}
+
+                  <button
+                    type="button"
+                    aria-pressed={form.leaveDuration === "HALF_DAY"}
+                    onClick={() =>
+                      updateField("leaveDuration", "HALF_DAY")
+                    }
+                    className={`rounded-xl border p-4 text-left transition ${
+                      form.leaveDuration === "HALF_DAY"
+                        ? "border-blue-600 bg-blue-50 ring-2 ring-blue-100"
+                        : "border-[#D6E2F5] bg-white hover:bg-slate-50"
+                    }`}
+                  >
+                    <span className="flex items-center gap-2">
+                      <span
+                        className={`flex h-5 w-5 items-center justify-center rounded-full border ${
+                          form.leaveDuration === "HALF_DAY"
+                            ? "border-blue-600"
+                            : "border-slate-300"
+                        }`}
+                      >
+                        {form.leaveDuration === "HALF_DAY" && (
+                          <span className="h-2.5 w-2.5 rounded-full bg-blue-600" />
+                        )}
+                      </span>
+
+                      <span className="text-sm font-bold text-[#172F60]">
+                        Half Day
+                      </span>
+                    </span>
+
+                    <span className="mt-2 block pl-7 text-xs leading-5 text-slate-500">
+                      Leave for half of one working day. Counts as 0.5 day.
+                    </span>
+                  </button>
+                </div>
+
+                {form.leaveDuration === "HALF_DAY" && (
+                  <p className="mt-2 text-xs leading-5 text-blue-700">
+                    Half-day leave is limited to one date. Select your start date below; the end date will match automatically.
+                  </p>
+                )}
               </div>
 
               {/* DATE FIELDS */}
@@ -831,13 +991,14 @@ function LeaveApplyContent() {
                     onChange={(event) =>
                       updateField("endDate", event.target.value)
                     }
+                    disabled={form.leaveDuration === "HALF_DAY"}
                     required
-                    className="h-12 w-full min-w-0 rounded-xl border border-[#D6E2F5] bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
+                    className="h-12 w-full min-w-0 rounded-xl border border-[#D6E2F5] bg-white px-4 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
                   />
                 </div>
               </div>
 
-              {/* DURATION */}
+              {/* DURATION SUMMARY */}
 
               {form.startDate &&
                 form.endDate &&
@@ -854,7 +1015,9 @@ function LeaveApplyContent() {
                         </p>
 
                         <p className="mt-1 text-xs text-slate-600">
-                          Calendar days, including the start and end dates.
+                          {form.leaveDuration === "HALF_DAY"
+                            ? "Half-day request for the selected date."
+                            : "Working days only. Saturdays and Sundays are excluded."}
                         </p>
                       </div>
                     </div>
@@ -862,11 +1025,24 @@ function LeaveApplyContent() {
                     <p className="text-xl font-bold text-blue-800">
                       {calculateLeaveDays()}{" "}
                       <span className="text-sm font-medium">
-                        {calculateLeaveDays() === 1
+                        {calculateLeaveDays() === 1 ||
+                        calculateLeaveDays() === 0.5
                           ? "day"
                           : "days"}
                       </span>
                     </p>
+                  </div>
+                )}
+
+              {/* WEEKEND WARNING */}
+
+              {form.startDate &&
+                form.endDate &&
+                calculateLeaveDays() === 0 && (
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                    The selected date range contains no working days.
+                    Saturdays and Sundays are excluded from leave
+                    calculations. Please select at least one weekday.
                   </div>
                 )}
 

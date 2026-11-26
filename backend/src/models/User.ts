@@ -53,44 +53,36 @@ export interface IUserNotifications {
 ===================================================== */
 
 export interface IUser extends Document {
-  /* BASIC INFORMATION */
-
+  // BASIC INFORMATION
   name: string;
   email: string;
   passwordHash: string;
   department?: string;
 
-  /* ROLE */
-
+  // ROLE
   role: UserRole;
 
-  /* PROFILE */
-
+  // PROFILE
   profileImage?: string;
 
-  /* BOOKING PREFERENCES */
-
+  // BOOKING PREFERENCES
   defaultLocation?: string;
   favoriteRoom?: mongoose.Types.ObjectId;
   defaultDuration: number;
   calendarView: CalendarView;
   timezone: string;
 
-  /* NOTIFICATIONS */
-
+  // NOTIFICATIONS
   notifications: IUserNotifications;
 
-  /* WORKING HOURS */
-
+  // WORKING HOURS
   workingHours: IWorkingHours;
 
-  /* PASSWORD RESET */
-
+  // PASSWORD RESET
   passwordResetTokenHash?: string | null;
   passwordResetExpiresAt?: Date | null;
 
-  /* TIMESTAMPS */
-
+  // TIMESTAMPS
   createdAt: Date;
   updatedAt: Date;
 }
@@ -129,7 +121,7 @@ const workingDaySchema = new Schema<IWorkingDay>(
 
 const userSchema = new Schema<IUser>(
   {
-    /* BASIC INFORMATION */
+    // BASIC INFORMATION
 
     name: {
       type: String,
@@ -160,7 +152,7 @@ const userSchema = new Schema<IUser>(
       maxlength: 100,
     },
 
-    /* ROLE */
+    // ROLE
 
     role: {
       type: String,
@@ -170,14 +162,14 @@ const userSchema = new Schema<IUser>(
       index: true,
     },
 
-    /* PROFILE */
+    // PROFILE
 
     profileImage: {
       type: String,
       trim: true,
     },
 
-    /* BOOKING PREFERENCES */
+    // BOOKING PREFERENCES
 
     defaultLocation: {
       type: String,
@@ -209,7 +201,7 @@ const userSchema = new Schema<IUser>(
       trim: true,
     },
 
-    /* NOTIFICATIONS */
+    // NOTIFICATIONS
 
     notifications: {
       bookingConfirmation: {
@@ -233,7 +225,7 @@ const userSchema = new Schema<IUser>(
       },
     },
 
-    /* WORKING HOURS */
+    // WORKING HOURS
 
     workingHours: {
       monday: {
@@ -276,7 +268,7 @@ const userSchema = new Schema<IUser>(
       },
     },
 
-    /* PASSWORD RESET */
+    // PASSWORD RESET
 
     passwordResetTokenHash: {
       type: String,
@@ -290,7 +282,6 @@ const userSchema = new Schema<IUser>(
       select: false,
     },
   },
-
   {
     timestamps: true,
   }

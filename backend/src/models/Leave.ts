@@ -62,15 +62,10 @@ export type ApprovalAction =
 
 export interface IApprovalHistory {
   action: ApprovalAction;
-
   performedBy: Types.ObjectId;
-
   performedByName: string;
-
   performedByEmail: string;
-
   comment?: string;
-
   performedAt: Date;
 }
 
@@ -79,13 +74,11 @@ export interface IApprovalHistory {
 ===================================================== */
 
 export interface ILeave extends Document {
-  // Employee information
   employeeId: Types.ObjectId;
   employeeName: string;
   employeeEmail: string;
   department?: string;
 
-  // Leave information
   leaveType: LeaveType;
 
   startDate: Date;
@@ -94,20 +87,16 @@ export interface ILeave extends Document {
   days: number;
   reason: string;
 
-  // Overall leave status
   status: LeaveStatus;
 
-  // First-level approver
   firstLevelApproverId: Types.ObjectId;
   firstLevelApproverName: string;
   firstLevelApproverEmail: string;
 
   firstLevelStatus: FirstLevelStatus;
-
   firstLevelComment?: string;
   firstLevelDecisionAt?: Date | null;
 
-  // Final admin approval
   approvedBy?: Types.ObjectId | null;
   approvedByName?: string;
   approvedByEmail?: string;
@@ -115,15 +104,25 @@ export interface ILeave extends Document {
   adminComment?: string;
   adminDecisionAt?: Date | null;
 
-  // Legacy approval fields
   approverComment?: string;
 
-  // Complete approval history
   approvalHistory: IApprovalHistory[];
 
   createdAt: Date;
   updatedAt: Date;
 }
+
+/* =====================================================
+   VALIDATION HELPERS
+===================================================== */
+
+const isValidLeaveDays = (value: number): boolean => {
+  return (
+    Number.isFinite(value) &&
+    value > 0 &&
+    Number.isInteger(value * 2)
+  );
+};
 
 /* =====================================================
    APPROVAL HISTORY SUB-SCHEMA
@@ -180,9 +179,7 @@ const approvalHistorySchema =
 
 const leaveSchema = new Schema<ILeave>(
   {
-    // -------------------------------------------------
     // EMPLOYEE INFORMATION
-    // -------------------------------------------------
 
     employeeId: {
       type: Schema.Types.ObjectId,
@@ -216,9 +213,7 @@ const leaveSchema = new Schema<ILeave>(
       maxlength: [100, "Department cannot exceed 100 characters"],
     },
 
-    // -------------------------------------------------
     // LEAVE TYPE
-    // -------------------------------------------------
 
     leaveType: {
       type: String,
@@ -229,9 +224,7 @@ const leaveSchema = new Schema<ILeave>(
       required: [true, "Leave type is required"],
     },
 
-    // -------------------------------------------------
     // LEAVE DATES
-    // -------------------------------------------------
 
     startDate: {
       type: Date,
@@ -255,24 +248,19 @@ const leaveSchema = new Schema<ILeave>(
       },
     },
 
-    // -------------------------------------------------
     // LEAVE DURATION
-    // -------------------------------------------------
 
     days: {
       type: Number,
       required: [true, "Leave duration is required"],
-      min: [1, "Leave duration must be at least one day"],
+      min: [0.5, "Leave duration must be at least half a day"],
       validate: {
-        validator: (value: number): boolean =>
-          Number.isFinite(value) && value > 0,
-        message: "Leave duration must be a positive number",
+        validator: isValidLeaveDays,
+        message: "Leave duration must use increments of 0.5 days",
       },
     },
 
-    // -------------------------------------------------
     // LEAVE REASON
-    // -------------------------------------------------
 
     reason: {
       type: String,
@@ -288,9 +276,7 @@ const leaveSchema = new Schema<ILeave>(
       ],
     },
 
-    // -------------------------------------------------
     // OVERALL LEAVE STATUS
-    // -------------------------------------------------
 
     status: {
       type: String,
@@ -303,9 +289,7 @@ const leaveSchema = new Schema<ILeave>(
       index: true,
     },
 
-    // -------------------------------------------------
     // FIRST-LEVEL APPROVER
-    // -------------------------------------------------
 
     firstLevelApproverId: {
       type: Schema.Types.ObjectId,
@@ -364,9 +348,7 @@ const leaveSchema = new Schema<ILeave>(
       default: null,
     },
 
-    // -------------------------------------------------
     // FINAL ADMIN APPROVAL
-    // -------------------------------------------------
 
     approvedBy: {
       type: Schema.Types.ObjectId,
@@ -398,9 +380,7 @@ const leaveSchema = new Schema<ILeave>(
       default: null,
     },
 
-    // -------------------------------------------------
     // LEGACY APPROVAL COMMENT
-    // -------------------------------------------------
 
     approverComment: {
       type: String,
@@ -411,9 +391,7 @@ const leaveSchema = new Schema<ILeave>(
       ],
     },
 
-    // -------------------------------------------------
     // APPROVAL HISTORY
-    // -------------------------------------------------
 
     approvalHistory: {
       type: [approvalHistorySchema],
@@ -427,10 +405,11 @@ const leaveSchema = new Schema<ILeave>(
 );
 
 /* =====================================================
-   SCHEMA-LEVEL DATE VALIDATION
+   SCHEMA-LEVEL VALIDATION
 ===================================================== */
 
 leaveSchema.pre("validate", function () {
+  // Validate date order.
   if (
     this.startDate instanceof Date &&
     this.endDate instanceof Date &&
@@ -456,7 +435,7 @@ leaveSchema.pre("validate", function () {
     );
   }
 
-  // Admin approval must follow first-level acceptance.
+  // Final approval must follow first-level acceptance.
   if (
     this.status === "Approved" &&
     this.firstLevelStatus !== "Accepted"
@@ -464,6 +443,17 @@ leaveSchema.pre("validate", function () {
     this.invalidate(
       "status",
       "Leave cannot be approved before first-level acceptance"
+    );
+  }
+
+  // An approved request must have an admin decision record.
+  if (
+    this.status === "Approved" &&
+    !this.approvedBy
+  ) {
+    this.invalidate(
+      "approvedBy",
+      "Approved leave must have an administrator recorded"
     );
   }
 });

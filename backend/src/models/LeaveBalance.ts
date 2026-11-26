@@ -1,3 +1,4 @@
+
 import mongoose, { Document, Model, Schema, Types } from "mongoose";
 
 import { LEAVE_TYPES, LeaveType } from "./Leave";
@@ -7,40 +8,27 @@ import { LEAVE_TYPES, LeaveType } from "./Leave";
  */
 export interface ILeaveBalance extends Document {
   employeeId: Types.ObjectId;
-
   leaveType: LeaveType;
-
-  /**
-   * Total leave days allocated to the employee for the year.
-   */
   entitlement: number;
-
-  /**
-   * Leave days already approved and taken.
-   */
   approvedDays: number;
-
-  /**
-   * Leave days awaiting approval.
-   */
   pendingDays: number;
-
-  /**
-   * Optional year for which this balance applies.
-   */
   year: number;
-
-  /**
-   * Remaining balance after approved leave.
-   *
-   * Pending leave is tracked separately and does not reduce
-   * availableDays in this implementation.
-   */
   availableDays: number;
-
   createdAt: Date;
   updatedAt: Date;
 }
+
+/**
+ * Validate leave days.
+ * Supports full days and half days only.
+ */
+const isValidLeaveDays = (value: number): boolean => {
+  return (
+    Number.isFinite(value) &&
+    value >= 0 &&
+    Number.isInteger(value * 2)
+  );
+};
 
 /**
  * Leave balance schema.
@@ -69,9 +57,8 @@ const leaveBalanceSchema = new Schema<ILeaveBalance>(
       min: [0, "Leave entitlement cannot be negative"],
       default: 0,
       validate: {
-        validator: (value: number) =>
-          Number.isFinite(value) && value >= 0,
-        message: "Entitlement must be a non-negative number",
+        validator: isValidLeaveDays,
+        message: "Entitlement must use increments of 0.5 days",
       },
     },
 
@@ -81,9 +68,8 @@ const leaveBalanceSchema = new Schema<ILeaveBalance>(
       default: 0,
       min: [0, "Approved leave days cannot be negative"],
       validate: {
-        validator: (value: number) =>
-          Number.isFinite(value) && value >= 0,
-        message: "Approved days must be a non-negative number",
+        validator: isValidLeaveDays,
+        message: "Approved days must use increments of 0.5 days",
       },
     },
 
@@ -93,9 +79,8 @@ const leaveBalanceSchema = new Schema<ILeaveBalance>(
       default: 0,
       min: [0, "Pending leave days cannot be negative"],
       validate: {
-        validator: (value: number) =>
-          Number.isFinite(value) && value >= 0,
-        message: "Pending days must be a non-negative number",
+        validator: isValidLeaveDays,
+        message: "Pending days must use increments of 0.5 days",
       },
     },
 
@@ -118,9 +103,8 @@ const leaveBalanceSchema = new Schema<ILeaveBalance>(
       default: 0,
       min: [0, "Available leave days cannot be negative"],
       validate: {
-        validator: (value: number) =>
-          Number.isFinite(value) && value >= 0,
-        message: "Available days must be a non-negative number",
+        validator: isValidLeaveDays,
+        message: "Available days must use increments of 0.5 days",
       },
     },
   },
@@ -131,8 +115,8 @@ const leaveBalanceSchema = new Schema<ILeaveBalance>(
 );
 
 /**
- * Each employee can have only one balance record per leave type
- * per calendar year.
+ * Each employee can have only one balance record
+ * per leave type per calendar year.
  */
 leaveBalanceSchema.index(
   {
@@ -146,10 +130,10 @@ leaveBalanceSchema.index(
 );
 
 /**
- * Calculate the available balance before saving.
+ * Calculate available balance before validation.
  *
- * Pending requests are displayed separately and do not reduce
- * availableDays under the current policy assumption.
+ * Pending requests are tracked separately and do not
+ * reduce availableDays under the current policy.
  */
 leaveBalanceSchema.pre("validate", function () {
   if (
@@ -166,7 +150,7 @@ leaveBalanceSchema.pre("validate", function () {
 });
 
 /**
- * Export the model without recompiling it during repeated imports.
+ * Export model without recompiling during repeated imports.
  */
 const LeaveBalance: Model<ILeaveBalance> =
   (mongoose.models.LeaveBalance as Model<ILeaveBalance>) ||

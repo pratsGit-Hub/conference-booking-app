@@ -15,6 +15,8 @@ import {
   submitAdminDecision,
   getAdminApprovalHistory,
   getAdminApprovalTracking,
+  adjustEmployeeLeaveBalance,
+  getLeaveActivityLog,
 } from "../controllers/leaveController.js";
 
 const router = Router();
@@ -25,38 +27,45 @@ const router = Router();
  * the authenticated user to req.user.
  */
 
-// ==========================================
+// =====================================================
 // EMPLOYEE ROUTES
-// ==========================================
+// =====================================================
 
 // GET /api/leaves/employees/search?q=name
 // Search registered employees to select a first-level approver.
-router.get("/employees/search", requireAuth, searchEmployees);
+router.get(
+  "/employees/search",
+  requireAuth,
+  searchEmployees
+);
 
 // GET /api/leaves/balance
 // Get the logged-in employee's leave balance.
-router.get("/balance", requireAuth, getMyLeaveBalance);
+router.get(
+  "/balance",
+  requireAuth,
+  getMyLeaveBalance
+);
 
 // POST /api/leaves
-// Submit a leave application with a selected first-level approver.
-router.post("/", requireAuth, createLeaveRequest);
+// Submit a leave application.
+router.post(
+  "/",
+  requireAuth,
+  createLeaveRequest
+);
 
 // GET /api/leaves
 // Get the logged-in employee's leave requests.
-router.get("/", requireAuth, getMyLeaveRequests);
+router.get(
+  "/",
+  requireAuth,
+  getMyLeaveRequests
+);
 
-// GET /api/leaves/:id
-// Get a leave request (applicant, assigned approver, or admin).
-router.get("/:id", requireAuth, getLeaveRequestById);
-
-// PATCH /api/leaves/:id/cancel
-// Cancel an eligible pending leave request.
-router.patch("/:id/cancel", requireAuth, cancelLeaveRequest);
-
-
-// ==========================================
+// =====================================================
 // FIRST-LEVEL APPROVER ROUTES
-// ==========================================
+// =====================================================
 
 // GET /api/leaves/approvals/first-level
 // Get leave applications assigned to the logged-in approver.
@@ -74,18 +83,48 @@ router.patch(
   submitFirstLevelDecision
 );
 
-
-// ==========================================
+// =====================================================
 // ADMIN / HR ROUTES
-// ==========================================
+// =====================================================
+
+// PATCH /api/leaves/admin/balance-adjustment
+// Add or reduce an employee's leave entitlement.
+router.patch(
+  "/admin/balance-adjustment",
+  requireAuth,
+  adjustEmployeeLeaveBalance
+);
+
+// GET /api/leaves/admin/activity-log
+// Shared activity log for administrators.
+router.get(
+  "/admin/activity-log",
+  requireAuth,
+  getLeaveActivityLog
+);
 
 // GET /api/leaves/admin/approvals
-// Get requests accepted by the first-level approver
-// and waiting for final admin approval.
+// Requests accepted by first-level approvers and awaiting final decision.
 router.get(
   "/admin/approvals",
   requireAuth,
   getAdminApprovalRequests
+);
+
+// GET /api/leaves/admin/history
+// Finalized leave approval and rejection history.
+router.get(
+  "/admin/history",
+  requireAuth,
+  getAdminApprovalHistory
+);
+
+// GET /api/leaves/admin/tracking
+// Track the complete approval journey.
+router.get(
+  "/admin/tracking",
+  requireAuth,
+  getAdminApprovalTracking
 );
 
 // PATCH /api/leaves/:id/admin-decision
@@ -96,21 +135,25 @@ router.patch(
   submitAdminDecision
 );
 
-// GET /api/leaves/admin/history
-// Get leave approval and rejection history.
-router.get(
-  "/admin/history",
+// =====================================================
+// DYNAMIC LEAVE REQUEST ROUTES
+// Keep these after the static routes.
+// =====================================================
+
+// PATCH /api/leaves/:id/cancel
+// Cancel an eligible pending leave request.
+router.patch(
+  "/:id/cancel",
   requireAuth,
-  getAdminApprovalHistory
+  cancelLeaveRequest
 );
 
-// GET /api/leaves/admin/tracking
-// Track the complete approval journey:
-// Employee -> First-level approver -> Admin.
+// GET /api/leaves/:id
+// Get a leave request (applicant, assigned approver, or admin).
 router.get(
-  "/admin/tracking",
+  "/:id",
   requireAuth,
-  getAdminApprovalTracking
+  getLeaveRequestById
 );
 
 export default router;

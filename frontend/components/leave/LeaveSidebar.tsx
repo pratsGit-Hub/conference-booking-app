@@ -16,6 +16,7 @@ import {
   ClipboardCheck,
   History,
   GitBranch,
+  Activity,
 } from "lucide-react";
 
 import type { LucideIcon } from "lucide-react";
@@ -86,6 +87,12 @@ const approvalNavigationItems: NavigationItem[] = [
     icon: GitBranch,
     adminOnly: true,
   },
+  {
+    label: "Leave Activity Log",
+    href: "/leave/activity-log",
+    icon: Activity,
+    adminOnly: true,
+  },
 ];
 
 /* ==========================================
@@ -107,8 +114,10 @@ export default function LeaveSidebar({
    * Every employee can be a first-level approver.
    * Therefore, Leave Approval is visible to everyone.
    *
-   * Only admins can see Approval History and
-   * Approval Tracking.
+   * Only admins can see:
+   * - Approval History
+   * - Approval Tracking
+   * - Leave Activity Log
    */
 
   const navigationItems: NavigationItem[] = [

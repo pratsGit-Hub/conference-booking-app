@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
@@ -20,6 +21,8 @@ import AdminGuard from "@/components/auth/AdminGuard";
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:5001";
 
+const POLLING_INTERVAL = 30_000;
+
 /* =====================================================
    TYPES
 ===================================================== */
@@ -41,6 +44,7 @@ type ApprovalHistoryItem = {
 
 type LeaveRequest = {
   _id: string;
+
   employeeId?: Person | string;
   employeeName?: string;
   employeeEmail?: string;
@@ -74,39 +78,69 @@ type LeaveRequest = {
 type Decision = "APPROVE" | "REJECT";
 type Tab = "pending" | "history";
 
+type ApiResponse = {
+  success?: boolean;
+  message?: string;
+  error?: string;
+  requests?: LeaveRequest[];
+  data?: LeaveRequest[] | { requests?: LeaveRequest[] };
+};
+
 /* =====================================================
    HELPERS
 ===================================================== */
 
-async function parseResponse(response: Response): Promise<any> {
-  const text = await response.text();
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
 
-  if (!text) return {};
+async function parseResponse(response: Response): Promise<unknown> {
+  const responseText = await response.text();
+
+  if (!responseText) {
+    return {};
+  }
 
   try {
-    return JSON.parse(text);
+    return JSON.parse(responseText) as unknown;
   } catch {
-    return { message: text };
+    return { message: responseText };
   }
 }
 
-function getMessage(data: any, fallback: string): string {
-  return data?.message || data?.error || fallback;
+function getMessage(data: unknown, fallback: string): string {
+  if (!isRecord(data)) return fallback;
+
+  if (typeof data.message === "string" && data.message.trim()) {
+    return data.message;
+  }
+
+  if (typeof data.error === "string" && data.error.trim()) {
+    return data.error;
+  }
+
+  return fallback;
 }
 
-function extractRequests(data: any): LeaveRequest[] {
-  if (Array.isArray(data)) return data;
-
-  if (Array.isArray(data?.requests)) {
-    return data.requests;
+function extractRequests(data: unknown): LeaveRequest[] {
+  if (Array.isArray(data)) {
+    return data as LeaveRequest[];
   }
 
-  if (Array.isArray(data?.data)) {
-    return data.data;
+  if (!isRecord(data)) {
+    return [];
   }
 
-  if (Array.isArray(data?.data?.requests)) {
-    return data.data.requests;
+  if (Array.isArray(data.requests)) {
+    return data.requests as LeaveRequest[];
+  }
+
+  if (Array.isArray(data.data)) {
+    return data.data as LeaveRequest[];
+  }
+
+  if (isRecord(data.data) && Array.isArray(data.data.requests)) {
+    return data.data.requests as LeaveRequest[];
   }
 
   return [];
@@ -168,6 +202,10 @@ function formatDateTime(value?: string): string {
   });
 }
 
+function formatAction(action: string): string {
+  return action.replaceAll("_", " ");
+}
+
 /* =====================================================
    MAIN COMPONENT
 ===================================================== */
@@ -175,20 +213,13 @@ function formatDateTime(value?: string): string {
 function AdminApprovalHistoryContent() {
   const [activeTab, setActiveTab] = useState<Tab>("pending");
 
-  const [pendingRequests, setPendingRequests] = useState<LeaveRequest[]>(
-    []
-  );
-
-  const [historyRequests, setHistoryRequests] = useState<LeaveRequest[]>(
-    []
-  );
+  const [pendingRequests, setPendingRequests] = useState<LeaveRequest[]>([]);
+  const [historyRequests, setHistoryRequests] = useState<LeaveRequest[]>([]);
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  const [processingId, setProcessingId] = useState<string | null>(
-    null
-  );
+  const [processingId, setProcessingId] = useState<string | null>(null);
 
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -201,10 +232,12 @@ function AdminApprovalHistoryContent() {
   const [comment, setComment] = useState("");
 
   /* =====================================================
-     FETCH ADMIN PENDING APPROVALS
+     FETCH PENDING APPROVALS
   ===================================================== */
 
-  const fetchPendingApprovals = useCallback(async () => {
+  const fetchPendingApprovals = useCallback(async (): Promise<
+    LeaveRequest[]
+  > => {
     const response = await fetch(
       `${API_BASE_URL}/api/leaves/admin/approvals`,
       {
@@ -232,7 +265,9 @@ function AdminApprovalHistoryContent() {
      FETCH APPROVAL HISTORY
   ===================================================== */
 
-  const fetchApprovalHistory = useCallback(async () => {
+  const fetchApprovalHistory = useCallback(async (): Promise<
+    LeaveRequest[]
+  > => {
     const response = await fetch(
       `${API_BASE_URL}/api/leaves/admin/history`,
       {
@@ -261,13 +296,15 @@ function AdminApprovalHistoryContent() {
   ===================================================== */
 
   const fetchAllData = useCallback(
-    async (showRefresh = false) => {
+    async (showRefresh = false, silent = false) => {
       try {
-        setError("");
+        if (!silent) {
+          setError("");
+        }
 
         if (showRefresh) {
           setRefreshing(true);
-        } else {
+        } else if (!silent) {
           setLoading(true);
         }
 
@@ -279,21 +316,43 @@ function AdminApprovalHistoryContent() {
         setPendingRequests(pending);
         setHistoryRequests(history);
       } catch (err) {
-        setError(
-          err instanceof Error
-            ? err.message
-            : "Unable to load leave approval data."
-        );
+        if (!silent) {
+          setError(
+            err instanceof Error
+              ? err.message
+              : "Unable to load leave approval data."
+          );
+        }
       } finally {
-        setLoading(false);
-        setRefreshing(false);
+        if (!silent) {
+          setLoading(false);
+        }
+
+        if (showRefresh) {
+          setRefreshing(false);
+        }
       }
     },
     [fetchPendingApprovals, fetchApprovalHistory]
   );
 
+  /* =====================================================
+     INITIAL LOAD + AUTOMATIC REFRESH
+
+     Both administrators see updated decisions
+     without manually refreshing the page.
+  ===================================================== */
+
   useEffect(() => {
-    fetchAllData();
+    void fetchAllData();
+
+    const intervalId = window.setInterval(() => {
+      void fetchAllData(false, true);
+    }, POLLING_INTERVAL);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
   }, [fetchAllData]);
 
   /* =====================================================
@@ -324,7 +383,9 @@ function AdminApprovalHistoryContent() {
   ===================================================== */
 
   async function submitAdminDecision() {
-    if (!selectedRequest || !decision) return;
+    if (!selectedRequest || !decision || processingId) {
+      return;
+    }
 
     try {
       setProcessingId(selectedRequest._id);
@@ -365,7 +426,7 @@ function AdminApprovalHistoryContent() {
       setDecision(null);
       setComment("");
 
-      // Reload both lists so the request moves into history.
+      // Reload both lists after the decision.
       await fetchAllData(true);
     } catch (err) {
       setError(
@@ -383,9 +444,7 @@ function AdminApprovalHistoryContent() {
   ===================================================== */
 
   const currentRequests =
-    activeTab === "pending"
-      ? pendingRequests
-      : historyRequests;
+    activeTab === "pending" ? pendingRequests : historyRequests;
 
   const filteredRequests = currentRequests.filter((request) => {
     const employeeName = getPersonName(
@@ -406,9 +465,19 @@ function AdminApprovalHistoryContent() {
       employeeName.toLowerCase().includes(query) ||
       employeeEmail.toLowerCase().includes(query) ||
       request.leaveType?.toLowerCase().includes(query) ||
-      request.status?.toLowerCase().includes(query)
+      request.status?.toLowerCase().includes(query) ||
+      request.firstLevelApproverName?.toLowerCase().includes(query) ||
+      request.approvedByName?.toLowerCase().includes(query)
     );
   });
+
+  const approvedCount = historyRequests.filter(
+    (request) => request.status === "Approved"
+  ).length;
+
+  const rejectedCount = historyRequests.filter(
+    (request) => request.status === "Rejected"
+  ).length;
 
   /* =====================================================
      LOADING
@@ -454,11 +523,15 @@ function AdminApprovalHistoryContent() {
               Review requests accepted by first-level approvers and manage
               final leave decisions.
             </p>
+
+            <p className="mt-2 text-xs text-slate-400">
+              This page automatically refreshes every 30 seconds.
+            </p>
           </div>
 
           <button
             type="button"
-            onClick={() => fetchAllData(true)}
+            onClick={() => void fetchAllData(true)}
             disabled={refreshing}
             className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-[#D6E2F5] bg-white px-4 text-sm font-semibold text-[#172F60] shadow-sm hover:bg-blue-50 disabled:opacity-60"
           >
@@ -513,11 +586,7 @@ function AdminApprovalHistoryContent() {
                   Approved
                 </p>
                 <p className="mt-2 text-3xl font-bold text-emerald-600">
-                  {
-                    historyRequests.filter(
-                      (request) => request.status === "Approved"
-                    ).length
-                  }
+                  {approvedCount}
                 </p>
               </div>
 
@@ -534,11 +603,7 @@ function AdminApprovalHistoryContent() {
                   Rejected
                 </p>
                 <p className="mt-2 text-3xl font-bold text-red-600">
-                  {
-                    historyRequests.filter(
-                      (request) => request.status === "Rejected"
-                    ).length
-                  }
+                  {rejectedCount}
                 </p>
               </div>
 
@@ -629,9 +694,11 @@ function AdminApprovalHistoryContent() {
             </h2>
 
             <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-slate-500">
-              {activeTab === "pending"
-                ? "Leave requests accepted by their first-level approvers will appear here."
-                : "Finalized leave requests will appear here."}
+              {search
+                ? "No leave requests match your search."
+                : activeTab === "pending"
+                  ? "Leave requests accepted by their first-level approvers will appear here."
+                  : "Finalized leave requests will appear here."}
             </p>
           </div>
         ) : (
@@ -681,9 +748,11 @@ function AdminApprovalHistoryContent() {
                         <h2 className="font-bold text-[#172F60]">
                           {employeeName}
                         </h2>
+
                         <p className="text-sm text-slate-500">
                           {employeeEmail}
                         </p>
+
                         {request.department && (
                           <p className="text-xs text-slate-400">
                             {request.department}
@@ -858,36 +927,34 @@ function AdminApprovalHistoryContent() {
                         </p>
 
                         <div className="space-y-3">
-                          {request.approvalHistory.map(
-                            (item, index) => (
-                              <div
-                                key={`${request._id}-${item.action}-${index}`}
-                                className="rounded-xl bg-slate-50 p-3"
-                              >
-                                <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-                                  <p className="text-sm font-semibold text-slate-700">
-                                    {item.action.replaceAll("_", " ")}
-                                  </p>
-                                  <p className="text-xs text-slate-400">
-                                    {formatDateTime(item.performedAt)}
-                                  </p>
-                                </div>
-
-                                <p className="mt-1 text-xs text-slate-500">
-                                  By: {item.performedByName || "User"}
-                                  {item.performedByEmail
-                                    ? ` (${item.performedByEmail})`
-                                    : ""}
+                          {request.approvalHistory.map((item, index) => (
+                            <div
+                              key={`${request._id}-${item.action}-${index}`}
+                              className="rounded-xl bg-slate-50 p-3"
+                            >
+                              <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                                <p className="text-sm font-semibold text-slate-700">
+                                  {formatAction(item.action)}
                                 </p>
-
-                                {item.comment && (
-                                  <p className="mt-2 text-sm text-slate-600">
-                                    {item.comment}
-                                  </p>
-                                )}
+                                <p className="text-xs text-slate-400">
+                                  {formatDateTime(item.performedAt)}
+                                </p>
                               </div>
-                            )
-                          )}
+
+                              <p className="mt-1 text-xs text-slate-500">
+                                By: {item.performedByName || "User"}
+                                {item.performedByEmail
+                                  ? ` (${item.performedByEmail})`
+                                  : ""}
+                              </p>
+
+                              {item.comment && (
+                                <p className="mt-2 text-sm text-slate-600">
+                                  {item.comment}
+                                </p>
+                              )}
+                            </div>
+                          ))}
                         </div>
                       </div>
                     )}
@@ -898,9 +965,7 @@ function AdminApprovalHistoryContent() {
                     <div className="flex flex-col gap-3 border-t border-slate-100 bg-slate-50/70 px-5 py-4 sm:flex-row sm:justify-end sm:px-6">
                       <button
                         type="button"
-                        onClick={() =>
-                          openDecision(request, "REJECT")
-                        }
+                        onClick={() => openDecision(request, "REJECT")}
                         disabled={processingId === request._id}
                         className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-red-200 bg-white px-5 text-sm font-semibold text-red-600 transition hover:bg-red-50 disabled:opacity-50"
                       >
@@ -910,9 +975,7 @@ function AdminApprovalHistoryContent() {
 
                       <button
                         type="button"
-                        onClick={() =>
-                          openDecision(request, "APPROVE")
-                        }
+                        onClick={() => openDecision(request, "APPROVE")}
                         disabled={processingId === request._id}
                         className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-50"
                       >
