@@ -1,11 +1,17 @@
 
-import mongoose, { Document, Model, Schema, Types } from "mongoose";
+import mongoose, {
+  Document,
+  Model,
+  Schema,
+  Types,
+} from "mongoose";
 
 import { LEAVE_TYPES, LeaveType } from "./Leave";
 
-/**
- * Leave balance document interface.
- */
+/* =====================================================
+   INTERFACE
+===================================================== */
+
 export interface ILeaveBalance extends Document {
   employeeId: Types.ObjectId;
   leaveType: LeaveType;
@@ -18,9 +24,13 @@ export interface ILeaveBalance extends Document {
   updatedAt: Date;
 }
 
+/* =====================================================
+   VALIDATION HELPERS
+===================================================== */
+
 /**
- * Validate leave days.
  * Supports full days and half days only.
+ * Valid values: 0, 0.5, 1, 1.5, 2, etc.
  */
 const isValidLeaveDays = (value: number): boolean => {
   return (
@@ -31,8 +41,20 @@ const isValidLeaveDays = (value: number): boolean => {
 };
 
 /**
- * Leave balance schema.
+ * Validate calendar year.
  */
+const isValidYear = (value: number): boolean => {
+  return (
+    Number.isInteger(value) &&
+    value >= 2000 &&
+    value <= 2200
+  );
+};
+
+/* =====================================================
+   SCHEMA
+===================================================== */
+
 const leaveBalanceSchema = new Schema<ILeaveBalance>(
   {
     employeeId: {
@@ -54,8 +76,8 @@ const leaveBalanceSchema = new Schema<ILeaveBalance>(
     entitlement: {
       type: Number,
       required: [true, "Leave entitlement is required"],
-      min: [0, "Leave entitlement cannot be negative"],
       default: 0,
+      min: [0, "Leave entitlement cannot be negative"],
       validate: {
         validator: isValidLeaveDays,
         message: "Entitlement must use increments of 0.5 days",
@@ -91,9 +113,8 @@ const leaveBalanceSchema = new Schema<ILeaveBalance>(
       min: [2000, "Year must be valid"],
       max: [2200, "Year must be valid"],
       validate: {
-        validator: (value: number) =>
-          Number.isInteger(value) && value >= 2000 && value <= 2200,
-        message: "Year must be a valid integer",
+        validator: isValidYear,
+        message: "Year must be a valid integer between 2000 and 2200",
       },
     },
 
@@ -114,6 +135,10 @@ const leaveBalanceSchema = new Schema<ILeaveBalance>(
   }
 );
 
+/* =====================================================
+   UNIQUE INDEX
+===================================================== */
+
 /**
  * Each employee can have only one balance record
  * per leave type per calendar year.
@@ -126,14 +151,23 @@ leaveBalanceSchema.index(
   },
   {
     unique: true,
+    name: "unique_employee_leave_balance_per_year",
   }
 );
+
+/* =====================================================
+   BALANCE CALCULATION
+===================================================== */
 
 /**
  * Calculate available balance before validation.
  *
- * Pending requests are tracked separately and do not
- * reduce availableDays under the current policy.
+ * Formula:
+ * Available Days = Entitlement - Approved Days
+ *
+ * Pending requests are displayed separately.
+ * They do not reduce availableDays under the
+ * existing leave balance policy.
  */
 leaveBalanceSchema.pre("validate", function () {
   if (
@@ -149,8 +183,13 @@ leaveBalanceSchema.pre("validate", function () {
   }
 });
 
+/* =====================================================
+   MODEL EXPORT
+===================================================== */
+
 /**
- * Export model without recompiling during repeated imports.
+ * Prevent recompilation errors during repeated imports
+ * and Next.js/backend development reloads.
  */
 const LeaveBalance: Model<ILeaveBalance> =
   (mongoose.models.LeaveBalance as Model<ILeaveBalance>) ||

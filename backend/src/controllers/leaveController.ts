@@ -251,55 +251,51 @@ const syncEmployeeBalances = async (
   const yearStart = new Date(Date.UTC(year, 0, 1));
   const yearEnd = new Date(Date.UTC(year + 1, 0, 1));
 
-  const balances = await LeaveBalance.find({
-    employeeId,
-    year,
-  });
-
-  if (balances.length === 0) {
-    return;
+  // Ensure every ADMIN and EMPLOYEE has records for all leave types.
+  // New records start at zero; existing entitlements are preserved.
+  for (const leaveType of LEAVE_TYPES) {
+    await LeaveBalance.updateOne(
+      { employeeId, leaveType, year },
+      {
+        $setOnInsert: {
+          employeeId,
+          leaveType,
+          year,
+          entitlement: 0,
+          approvedDays: 0,
+          pendingDays: 0,
+          availableDays: 0,
+        },
+      },
+      { upsert: true }
+    );
   }
 
   const usage = await Leave.aggregate([
     {
       $match: {
         employeeId,
-        startDate: {
-          $gte: yearStart,
-          $lt: yearEnd,
-        },
-        status: {
-          $in: ["Approved", "Pending"],
-        },
+        startDate: { $gte: yearStart, $lt: yearEnd },
+        status: { $in: ["Approved", "Pending"] },
       },
     },
     {
       $group: {
-        _id: {
-          leaveType: "$leaveType",
-          status: "$status",
-        },
-        totalDays: {
-          $sum: "$days",
-        },
+        _id: { leaveType: "$leaveType", status: "$status" },
+        totalDays: { $sum: "$days" },
       },
     },
   ]);
 
   const usageMap = new Map<string, number>();
-
   for (const item of usage) {
-    const key = `${item._id.leaveType}:${item._id.status}`;
-    usageMap.set(key, item.totalDays);
+    usageMap.set(`${item._id.leaveType}:${item._id.status}`, item.totalDays);
   }
 
+  const balances = await LeaveBalance.find({ employeeId, year });
   for (const balance of balances) {
-    balance.approvedDays =
-      usageMap.get(`${balance.leaveType}:Approved`) || 0;
-
-    balance.pendingDays =
-      usageMap.get(`${balance.leaveType}:Pending`) || 0;
-
+    balance.approvedDays = usageMap.get(`${balance.leaveType}:Approved`) || 0;
+    balance.pendingDays = usageMap.get(`${balance.leaveType}:Pending`) || 0;
     await balance.save();
   }
 };
@@ -905,10 +901,7 @@ export const getMyLeaveBalance = async (
     const employee = await getAuthenticatedEmployee(req);
 
     if (!employee) {
-      res.status(401).json({
-        success: false,
-        message: "Authentication required.",
-      });
+      res.status(401).json({ success: false, message: "Authentication required." });
       return;
     }
 
@@ -916,99 +909,53 @@ export const getMyLeaveBalance = async (
       ? Number(req.query.year)
       : new Date().getFullYear();
 
-    if (
-      !Number.isInteger(requestedYear) ||
-      requestedYear < 2000 ||
-      requestedYear > 2200
-    ) {
-      res.status(400).json({
-        success: false,
-        message: "Please provide a valid year.",
-      });
+    if (!Number.isInteger(requestedYear) || requestedYear < 2000 || requestedYear > 2200) {
+      res.status(400).json({ success: false, message: "Please provide a valid year." });
       return;
     }
 
-    await syncEmployeeBalances(
-      employee.employeeId,
-      requestedYear
-    );
+    // Both ADMIN and EMPLOYEE accounts can view their own balances.
+    await syncEmployeeBalances(employee.employeeId, requestedYear);
 
     const balances = await LeaveBalance.find({
       employeeId: employee.employeeId,
       year: requestedYear,
-    }).sort({
-      leaveType: 1,
-    });
+    }).sort({ leaveType: 1 });
 
-    if (balances.length === 0) {
-      res.status(404).json({
-        success: false,
-        message:
-          "No leave entitlement has been configured for your account for this year. Please contact HR.",
-        year: requestedYear,
-        balances: [],
-      });
-      return;
-    }
+    const breakdown = balances.map((balance) => ({
+      leaveType: balance.leaveType,
+      entitlement: balance.entitlement,
+      approvedDays: balance.approvedDays,
+      pendingDays: balance.pendingDays,
+      availableDays: Math.max(0, balance.entitlement - balance.approvedDays),
+    }));
 
-    const breakdown = balances.map((balance) => {
-      const availableDays = Math.max(
-        0,
-        balance.entitlement - balance.approvedDays
-      );
-
-      return {
-        leaveType: balance.leaveType,
-        entitlement: balance.entitlement,
-        approvedDays: balance.approvedDays,
-        pendingDays: balance.pendingDays,
-        availableDays,
-      };
-    });
-
-    const totals = breakdown.reduce(
+    const summary = breakdown.reduce(
       (result, item) => ({
-        totalEntitlement:
-          result.totalEntitlement + item.entitlement,
-
-        leaveTaken:
-          result.leaveTaken + item.approvedDays,
-
-        pendingLeave:
-          result.pendingLeave + item.pendingDays,
-
-        remainingBalance:
-          result.remainingBalance + item.availableDays,
+        totalEntitlement: result.totalEntitlement + item.entitlement,
+        leaveTaken: result.leaveTaken + item.approvedDays,
+        pendingLeave: result.pendingLeave + item.pendingDays,
+        remainingBalance: result.remainingBalance + item.availableDays,
       }),
-      {
-        totalEntitlement: 0,
-        leaveTaken: 0,
-        pendingLeave: 0,
-        remainingBalance: 0,
-      }
+      { totalEntitlement: 0, leaveTaken: 0, pendingLeave: 0, remainingBalance: 0 }
     );
 
     res.status(200).json({
       success: true,
       year: requestedYear,
-
       employee: {
         id: employee.employeeId,
         name: employee.employeeName,
         email: employee.employeeEmail,
         department: employee.department,
+        role: employee.role,
       },
-
-      summary: totals,
+      summary,
       breakdown,
     });
   } catch (error: unknown) {
-    console.error("Get employee leave balance error:", error);
-
-    res.status(500).json({
-      success: false,
-      message: "Unable to calculate leave balance.",
-    });
+    console.error("Get leave balance error:", error);
+    res.status(500).json({ success: false, message: "Unable to calculate leave balance." });
   }
 };
 
@@ -1127,7 +1074,7 @@ export const adjustEmployeeLeaveBalance = async (
     // Retrieve employee from database.
     const targetEmployee = await User.findOne({
       _id: employeeId,
-      role: "EMPLOYEE",
+      role: { $in: ["ADMIN", "EMPLOYEE"] },
     })
       .select("name email department role")
       .lean();
@@ -1135,7 +1082,7 @@ export const adjustEmployeeLeaveBalance = async (
     if (!targetEmployee) {
       res.status(404).json({
         success: false,
-        message: "Employee not found.",
+        message: "Registered user not found.",
       });
       return;
     }
@@ -1922,8 +1869,9 @@ export const getLeaveActivityLog = async (
     }
 
     // Filter by admin who performed the action.
-    if (req.query.actorId) {
-      const actorId = String(req.query.actorId);
+    const requestedActorId = req.query.adminId ?? req.query.actorId;
+    if (requestedActorId) {
+      const actorId = String(requestedActorId);
 
       if (!Types.ObjectId.isValid(actorId)) {
         res.status(400).json({
@@ -1934,6 +1882,7 @@ export const getLeaveActivityLog = async (
       }
 
       filters.actorId = new Types.ObjectId(actorId);
+      filters.actorRole = "ADMIN";
     }
 
     // Filter by activity type.
@@ -1970,8 +1919,11 @@ export const getLeaveActivityLog = async (
       $lt?: Date;
     } = {};
 
-    if (req.query.startDate) {
-      const startDate = parseDate(req.query.startDate);
+    const requestedStartDate = req.query.from ?? req.query.startDate;
+    const requestedEndDate = req.query.to ?? req.query.endDate;
+
+    if (requestedStartDate) {
+      const startDate = parseDate(requestedStartDate);
 
       if (!startDate) {
         res.status(400).json({
@@ -1984,8 +1936,8 @@ export const getLeaveActivityLog = async (
       dateFilter.$gte = startDate;
     }
 
-    if (req.query.endDate) {
-      const endDate = parseDate(req.query.endDate);
+    if (requestedEndDate) {
+      const endDate = parseDate(requestedEndDate);
 
       if (!endDate) {
         res.status(400).json({
